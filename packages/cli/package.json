@@ -1,0 +1,24 @@
+{
+  "name": "@qunoqu/cli",
+  "version": "0.0.0",
+  "description": "Qunoqu CLI tool",
+  "type": "module",
+  "bin": {
+    "qunoqu": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@qunoqu/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.3.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
