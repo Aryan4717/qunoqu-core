@@ -22,3 +22,15 @@ export const DEFAULT_IGNORE_PATTERNS = [
   "**/dist/**",
   "**/build/**",
 ] as const;
+
+/**
+ * Terminal event sent from shell integration and emitted by TerminalCapture.
+ */
+export interface TerminalEvent {
+  command: string;
+  exitCode: number;
+  cwd: string;
+  output: string;
+  timestamp: number;
+  projectId: string;
+}
