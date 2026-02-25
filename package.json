@@ -1,0 +1,28 @@
+{
+  "name": "qunoqu",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Qunoqu developer tool monorepo",
+  "workspaces": [
+    "packages/core",
+    "packages/cli",
+    "packages/vscode-ext"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "eslint . --ext .ts,.tsx"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.0",
+    "vitest": "^1.3.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
