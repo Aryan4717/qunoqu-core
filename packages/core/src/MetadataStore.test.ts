@@ -76,6 +76,35 @@ describe("MetadataStore", () => {
     expect(recent[1].content).toBe("second");
   });
 
+  it("keywordSearch returns items matching query terms", () => {
+    store = openTestDb();
+    const projectId = store.insertProject({ name: "p", root_path: "/p" });
+    store.insertContextItem({
+      project_id: projectId,
+      type: "decision",
+      content: "We use WebSockets for real-time updates",
+      file_path: "/p/service.ts",
+    });
+    store.insertContextItem({
+      project_id: projectId,
+      type: "comment",
+      content: "Redis cache for sessions",
+      file_path: null,
+    });
+    store.insertContextItem({
+      project_id: projectId,
+      type: "file_change",
+      content: "WebSockets and Redis are configured",
+      file_path: "/p/config.ts",
+    });
+    const results = store.keywordSearch("WebSockets", { projectId, limit: 10 });
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results.some((r) => r.content.includes("WebSockets for real-time"))).toBe(true);
+    expect(results.some((r) => r.content.includes("WebSockets and Redis"))).toBe(true);
+    const limited = store.keywordSearch("WebSockets", { projectId, limit: 1 });
+    expect(limited).toHaveLength(1);
+  });
+
   it("markStale sets is_stale = true", () => {
     store = openTestDb();
     const projectId = store.insertProject({ name: "p", root_path: "/p" });

@@ -39,6 +39,7 @@ export class FileWatcher extends EventEmitter {
       typeof projectDirOrOptions === "string"
         ? maybeOptions ?? {}
         : projectDirOrOptions ?? {};
+    this.projectDir = typeof projectDirOrOptions === "string" ? projectDirOrOptions : "";
     this.projectId = options.projectId ?? "default";
     this.ignore = options.ignore ?? [...DEFAULT_IGNORE_PATTERNS];
   }

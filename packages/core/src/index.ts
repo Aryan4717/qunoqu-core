@@ -38,3 +38,6 @@ export type {
   NodeType,
   RelationType,
 } from "./KnowledgeGraph.js";
+export { QunoqMCPServer, CLAUDE_DESKTOP_MCP_CONFIG } from "./QunoqMCPServer.js";
+export type { QunoqMCPServerOptions } from "./QunoqMCPServer.js";
+export { detectProjectId } from "./ProjectDetector.js";
