@@ -26,25 +26,29 @@ export interface FileWatcherEvents {
 export class FileWatcher extends EventEmitter {
   private watcher: ReturnType<typeof chokidar.watch> | null = null;
   private hashCache = new Map<string, string>();
+  private projectDir: string;
   private projectId: string;
   private ignore: string[];
 
-  constructor(options: FileWatcherOptions = {}) {
+  constructor(projectDir: string, options: FileWatcherOptions = {}) {
     super();
+    this.projectDir = projectDir;
     this.projectId = options.projectId ?? "default";
     this.ignore = options.ignore ?? [...DEFAULT_IGNORE_PATTERNS];
   }
 
   /**
    * Watch a project directory recursively. On file change/add, extract context and emit.
+   * Uses this.projectDir when no argument is passed.
    */
-  watch(projectDir: string): this {
+  watch(projectDir?: string): this {
+    const dir = projectDir ?? this.projectDir;
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
     }
 
-    this.watcher = chokidar.watch(projectDir, {
+    this.watcher = chokidar.watch(dir, {
       persistent: true,
       ignoreInitial: false,
       ignored: this.ignore,
