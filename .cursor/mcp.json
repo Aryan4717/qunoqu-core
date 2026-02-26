@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "qunoqu": {
+      "command": "node",
+      "args": [
+        "/Users/aryan/Desktop/qunoqu-core/packages/core/dist/run-mcp.js"
+      ],
+      "env": {
+        "QUNOQU_PROJECT_ID": "5193ac5a-1d9e-8878-c6d1-b1f95c0313dd"
+      }
+    }
+  }
+}

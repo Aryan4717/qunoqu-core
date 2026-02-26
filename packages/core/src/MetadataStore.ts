@@ -280,6 +280,37 @@ export class MetadataStore {
     }));
   }
 
+  /**
+   * List all projects with context item counts and last active timestamps.
+   */
+  listProjects(): Array<{ id: string; name: string; root_path: string; created_at: number; last_active: number; context_count: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT p.id, p.name, p.root_path, p.created_at, p.last_active,
+                COUNT(c.id) AS context_count
+         FROM projects p
+         LEFT JOIN context_items c ON p.id = c.project_id
+         GROUP BY p.id
+         ORDER BY p.last_active DESC`
+      )
+      .all() as Array<{
+      id: string;
+      name: string;
+      root_path: string;
+      created_at: number;
+      last_active: number;
+      context_count: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      root_path: r.root_path,
+      created_at: r.created_at,
+      last_active: r.last_active,
+      context_count: r.context_count,
+    }));
+  }
+
   /** Get decisions, optionally filtered by project. */
   getDecisions(projectId?: string): DecisionRow[] {
     if (projectId) {

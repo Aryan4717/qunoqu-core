@@ -1,6 +1,10 @@
 /**
  * MCP server exposing the qunoqu memory layer to AI tools (Claude Desktop, Cursor).
- * Transport: stdio. Tools: recall_context, save_decision, get_project_summary.
+ * Transport: stdio. Tools: recall_context, save_decision, get_project_summary, list_projects.
+ *
+ * Cursor .cursor/mcp.json format:
+ *   { "mcpServers": { "qunoqu": { "command": "node", "args": ["<path>/run-mcp.js"], "env": { "QUNOQU_PROJECT_ID": "<optional>" } } } }
+ * projectId can come from tool input or from QUNOQU_PROJECT_ID set at startup.
  */
 
 import { z } from "zod";
@@ -22,6 +26,11 @@ export interface QunoqMCPServerOptions {
 }
 
 const DEFAULT_TOP_K = 5;
+
+/** Project ID from tool args or from env (set at startup, e.g. by Cursor config). */
+function resolveProjectId(argProjectId: string | undefined): string | undefined {
+  return argProjectId ?? process.env.QUNOQU_PROJECT_ID ?? undefined;
+}
 
 function formatContextItem(
   item: { content: string; file_path?: string | null; type?: string; created_at?: number },
@@ -102,7 +111,7 @@ export class QunoqMCPServer {
       async (args) => {
         try {
           const topK = args.topK ?? DEFAULT_TOP_K;
-          const projectId = args.projectId ?? undefined;
+          const projectId = resolveProjectId(args.projectId);
           const meta = this.getMetadataStore();
 
           const keywordRows = meta.keywordSearch(args.query, {
@@ -167,24 +176,31 @@ export class QunoqMCPServer {
         inputSchema: z.object({
           title: z.string().describe("Short title of the decision"),
           rationale: z.string().describe("Rationale or explanation"),
-          projectId: z.string().describe("Project ID"),
+          projectId: z.string().optional().describe("Project ID (defaults to QUNOQU_PROJECT_ID if set)"),
         }),
       },
       async (args) => {
         try {
+          const projectId = resolveProjectId(args.projectId);
+          if (!projectId) {
+            return {
+              content: [{ type: "text" as const, text: "projectId is required (pass as argument or set QUNOQU_PROJECT_ID)." }],
+              isError: true,
+            };
+          }
           const meta = this.getMetadataStore();
           const id = meta.insertDecision({
-            project_id: args.projectId,
+            project_id: projectId,
             title: args.title,
             rationale: args.rationale,
           });
           const kg = this.getKnowledgeGraph();
-          const nodeId = `decision:${args.projectId}:${id}`;
+          const nodeId = `decision:${projectId}:${id}`;
           kg.addNode({
             id: nodeId,
             type: "decision",
             label: args.title.slice(0, 80),
-            projectId: args.projectId,
+            projectId,
             metadata: { rationale: args.rationale.slice(0, 200) },
           });
           kg.save();
@@ -212,14 +228,20 @@ export class QunoqMCPServer {
         description:
           "Returns a project summary: last 10 context items, top decisions, knowledge graph summary, and active file list.",
         inputSchema: z.object({
-          projectId: z.string().describe("Project ID"),
+          projectId: z.string().optional().describe("Project ID (defaults to QUNOQU_PROJECT_ID if set)"),
         }),
       },
       async (args) => {
         try {
+          const projectId = resolveProjectId(args.projectId);
+          if (!projectId) {
+            return {
+              content: [{ type: "text" as const, text: "projectId is required (pass as argument or set QUNOQU_PROJECT_ID)." }],
+              isError: true,
+            };
+          }
           const meta = this.getMetadataStore();
           const kg = this.getKnowledgeGraph();
-          const projectId = args.projectId;
 
           const contextItems = meta.getByProject(projectId).slice(0, 10);
           const decisions = meta.getDecisions(projectId).slice(0, 10);
@@ -252,6 +274,34 @@ export class QunoqMCPServer {
           const message = err instanceof Error ? err.message : String(err);
           return {
             content: [{ type: "text" as const, text: `Project summary failed: ${message}. Check that storage is available.` }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    this.mcp.registerTool(
+      "list_projects",
+      {
+        description: "List all known projects with context item counts and last active timestamps.",
+        inputSchema: z.object({}),
+      },
+      async () => {
+        try {
+          const meta = this.getMetadataStore();
+          const projects = meta.listProjects();
+          if (projects.length === 0) {
+            return { content: [{ type: "text" as const, text: "No projects in memory yet." }] };
+          }
+          const lines = projects.map(
+            (p) =>
+              `${p.id}\t${p.name}\t${p.root_path}\tcontext_items=${p.context_count}\tlast_active=${new Date(p.last_active).toISOString()}`
+          );
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            content: [{ type: "text" as const, text: `List projects failed: ${message}. Check that storage is available.` }],
             isError: true,
           };
         }

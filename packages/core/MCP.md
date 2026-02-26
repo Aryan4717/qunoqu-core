@@ -9,6 +9,7 @@ MCP server that exposes the qunoqu memory layer to AI tools (Claude Desktop, Cur
 | **recall_context** | Hybrid search (vector + keyword) over project memory. Returns top K relevant context items with source info. |
 | **save_decision** | Saves a decision to the decisions table and knowledge graph. |
 | **get_project_summary** | Returns last 10 context items, top decisions, knowledge graph summary, and active file list for a project. |
+| **list_projects** | Lists all known projects with context item counts and last active timestamps. |
 
 ## Running the server
 
@@ -40,6 +41,32 @@ Add this to your Claude Desktop config file under `mcpServers`:
 ```
 
 Replace `/ABSOLUTE/PATH/TO/qunoqu-core` with the actual path to your qunoqu-core repo (e.g. `/Users/you/qunoqu-core`).
+
+## Cursor IDE configuration
+
+**Exact Cursor `.cursor/mcp.json` format** (project-level; commit to share with team):
+
+```json
+{
+  "mcpServers": {
+    "qunoqu": {
+      "command": "node",
+      "args": ["/absolute/path/to/run-mcp.js"],
+      "env": {
+        "QUNOQU_PROJECT_ID": "<optional; auto-detected project id for default scope>"
+      }
+    }
+  }
+}
+```
+
+Generate this file and auto-detect project ID from the current directory:
+
+```bash
+npx qunoqu config cursor
+```
+
+This writes `.cursor/mcp.json` and sets `QUNOQU_PROJECT_ID` from git remote, `package.json` name+version, or directory name. Restart Cursor after changing the file. The server accepts `projectId` from tool arguments or from `QUNOQU_PROJECT_ID` at startup (multiple projects supported when passing `projectId` explicitly).
 
 ## Error handling
 
