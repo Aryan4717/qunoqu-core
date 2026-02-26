@@ -29,3 +29,12 @@ export { VectorStore } from "./VectorStore.js";
 export type { VectorStoreOptions, SemanticSearchResult } from "./VectorStore.js";
 export { OllamaEmbeddingFunction } from "./OllamaEmbeddingFunction.js";
 export type { OllamaEmbeddingFunctionOptions } from "./OllamaEmbeddingFunction.js";
+export { KnowledgeGraph } from "./KnowledgeGraph.js";
+export type {
+  KnowledgeGraphOptions,
+  GraphNode,
+  GraphEdge,
+  GraphData,
+  NodeType,
+  RelationType,
+} from "./KnowledgeGraph.js";
