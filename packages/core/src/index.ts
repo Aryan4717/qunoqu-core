@@ -25,3 +25,7 @@ export type {
   InsertContextItemInput,
   InsertDecisionInput,
 } from "./metadataTypes.js";
+export { VectorStore } from "./VectorStore.js";
+export type { VectorStoreOptions, SemanticSearchResult } from "./VectorStore.js";
+export { OllamaEmbeddingFunction } from "./OllamaEmbeddingFunction.js";
+export type { OllamaEmbeddingFunctionOptions } from "./OllamaEmbeddingFunction.js";
