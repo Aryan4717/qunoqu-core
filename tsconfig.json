@@ -14,5 +14,5 @@
     "composite": false,
     "noEmit": true
   },
-  "exclude": ["node_modules", "**/dist", "**/out"]
+  "exclude": ["node_modules", "**/dist", "**/out", "packages/vscode-ext"]
 }
