@@ -228,6 +228,58 @@ export class MetadataStore {
     return result.changes;
   }
 
+  /**
+   * Keyword search over context_items content. Tokenizes query and matches any token (OR).
+   * Optionally scoped by projectId. Returns items ordered by created_at DESC.
+   */
+  keywordSearch(
+    query: string,
+    options: { projectId?: string; limit?: number } = {}
+  ): ContextItemRow[] {
+    const limit = options.limit ?? 20;
+    const tokens = query
+      .trim()
+      .split(/\s+/)
+      .filter((t) => t.length > 0)
+      .map((t) => t.replace(/%/g, "\\%"));
+    if (tokens.length === 0) {
+      if (options.projectId) {
+        return this.getByProject(options.projectId).slice(0, limit);
+      }
+      return this.getRecent(limit);
+    }
+    const conditions = tokens.map(() => "content LIKE ?").join(" OR ");
+    const params = tokens.map((t) => `%${t}%`);
+    const sql = options.projectId
+      ? `SELECT id, project_id, type, content, file_path, embedding_id, tags, created_at, is_stale
+         FROM context_items WHERE project_id = ? AND (${conditions}) ORDER BY created_at DESC LIMIT ?`
+      : `SELECT id, project_id, type, content, file_path, embedding_id, tags, created_at, is_stale
+         FROM context_items WHERE ${conditions} ORDER BY created_at DESC LIMIT ?`;
+    const runParams = options.projectId ? [options.projectId, ...params, limit] : [...params, limit];
+    const rows = this.db.prepare(sql).all(...runParams) as Array<{
+      id: string;
+      project_id: string;
+      type: string;
+      content: string;
+      file_path: string | null;
+      embedding_id: string | null;
+      tags: string;
+      created_at: number;
+      is_stale: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      project_id: r.project_id,
+      type: r.type as ContextItemRow["type"],
+      content: r.content,
+      file_path: r.file_path,
+      embedding_id: r.embedding_id,
+      tags: JSON.parse(r.tags) as string[],
+      created_at: r.created_at,
+      is_stale: r.is_stale !== 0,
+    }));
+  }
+
   /** Get decisions, optionally filtered by project. */
   getDecisions(projectId?: string): DecisionRow[] {
     if (projectId) {

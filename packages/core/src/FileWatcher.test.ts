@@ -62,6 +62,9 @@ describe("FileWatcher", () => {
     expect(hasType("function")).toBe(true);
     expect(hasType("todo")).toBe(true);
     expect(hasType("import")).toBe(true);
+  } finally {
+    rmSync(tmpDirSync, { recursive: true, force: true });
+  }
   });
 
   it("does not re-emit for unchanged file (hash cache)", async () => {
