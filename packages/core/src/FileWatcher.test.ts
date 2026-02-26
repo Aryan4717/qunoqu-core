@@ -64,11 +64,12 @@ describe("FileWatcher", () => {
 
     expect(captured.length).toBeGreaterThan(0);
     const allItems = (captured as unknown[][])?.flat?.() ?? captured;
-    const items = Array.isArray(allItems) ? allItems : [];
-    expect(items.some((i: { type?: string }) => i?.type === "class")).toBe(true);
-    expect(items.some((i: { type?: string }) => i?.type === "function")).toBe(true);
-    expect(items.some((i: { type?: string }) => i?.type === "todo")).toBe(true);
-    expect(items.some((i: { type?: string }) => i?.type === "import")).toBe(true);
+    const items: unknown[] = Array.isArray(allItems) ? allItems : [];
+    const hasType = (t: string) => items.some((i) => (i as { type?: string })?.type === t);
+    expect(hasType("class")).toBe(true);
+    expect(hasType("function")).toBe(true);
+    expect(hasType("todo")).toBe(true);
+    expect(hasType("import")).toBe(true);
   });
 
   it.skip("does not re-emit for unchanged file (hash cache)", async () => {
