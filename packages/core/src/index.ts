@@ -14,3 +14,14 @@ export { DEFAULT_IGNORE_PATTERNS } from "./types.js";
 export { TerminalCapture, TERMINAL_EVENT } from "./TerminalCapture.js";
 export type { TerminalCaptureOptions } from "./TerminalCapture.js";
 export { SHELL_INTEGRATION_SCRIPT } from "./shellIntegrationScript.js";
+export { MetadataStore } from "./MetadataStore.js";
+export type { MetadataStoreOptions } from "./MetadataStore.js";
+export type {
+  ProjectRow,
+  ContextItemRow,
+  DecisionRow,
+  ContextItemTypeEnum,
+  InsertProjectInput,
+  InsertContextItemInput,
+  InsertDecisionInput,
+} from "./metadataTypes.js";
