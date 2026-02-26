@@ -30,9 +30,15 @@ export class FileWatcher extends EventEmitter {
   private projectId: string;
   private ignore: string[];
 
-  constructor(projectDir: string, options: FileWatcherOptions = {}) {
+  constructor(
+    projectDirOrOptions?: string | FileWatcherOptions,
+    maybeOptions?: FileWatcherOptions
+  ) {
     super();
-    this.projectDir = projectDir;
+    const options: FileWatcherOptions =
+      typeof projectDirOrOptions === "string"
+        ? maybeOptions ?? {}
+        : projectDirOrOptions ?? {};
     this.projectId = options.projectId ?? "default";
     this.ignore = options.ignore ?? [...DEFAULT_IGNORE_PATTERNS];
   }
