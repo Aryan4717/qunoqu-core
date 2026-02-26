@@ -19,6 +19,8 @@ export type ContextItemType =
 export const DEFAULT_IGNORE_PATTERNS = [
   "**/node_modules/**",
   "**/.git/**",
+  "**/.env/**",
+  "**/.env",
   "**/dist/**",
   "**/build/**",
 ] as const;
