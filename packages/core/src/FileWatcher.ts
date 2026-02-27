@@ -7,6 +7,7 @@ import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import { EventEmitter } from "events";
 import { extractContext } from "./extractContext.js";
+import { filterContextItem } from "./PrivacyFilter.js";
 import type { ContextItem } from "./types.js";
 import { DEFAULT_IGNORE_PATTERNS } from "./types.js";
 
@@ -90,7 +91,11 @@ export class FileWatcher extends EventEmitter {
     if (prev === hash) return;
     this.hashCache.set(filePath, hash);
 
-    const items = extractContext(content, filePath, this.projectId);
+    const rawItems = extractContext(content, filePath, this.projectId);
+    const projectRoot = this.projectDir || undefined;
+    const items = rawItems
+      .map((item) => filterContextItem(item, { projectRoot }))
+      .filter((item): item is ContextItem => item !== null);
     if (items.length > 0) {
       super.emit(CONTEXT_CAPTURED_EVENT, items);
     }

@@ -43,3 +43,5 @@ export type { QunoqMCPServerOptions } from "./QunoqMCPServer.js";
 export { createRestApiServer, getOrCreateApiTokenForServer, getApiTokenPath } from "./RestApiServer.js";
 export type { RestApiServerOptions, SummaryResponse, HealthResponse, ContextItemResponse } from "./RestApiServer.js";
 export { detectProjectId } from "./ProjectDetector.js";
+export { PrivacyFilter, filterContextItem } from "./PrivacyFilter.js";
+export type { PrivacyFilterOptions } from "./PrivacyFilter.js";
