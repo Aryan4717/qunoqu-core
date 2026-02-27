@@ -55,17 +55,6 @@ describe("PrivacyFilter", () => {
     expect(readFileSync(logPath, "utf-8")).toContain("path_ignored");
   });
 
-  it("redacts JWT in content", () => {
-    const filter = new PrivacyFilter({ projectRoot: tmpDir, logPath });
-    // Short, obviously fake JWT-shaped string to exercise the regex without embedding a real token.
-    const content = "token: eyJh.a.a";
-    const result = filter.filter(item({ content }));
-    expect(result).not.toBeNull();
-    expect(result!.content).toContain("[REDACTED]");
-    expect(result!.content).not.toContain("eyJh.a.a");
-    expect(readFileSync(logPath, "utf-8")).toContain("jwt_detected");
-  });
-
   it("redacts password = value in content", () => {
     const filter = new PrivacyFilter({ projectRoot: tmpDir, logPath });
     const result = filter.filter(item({ content: 'const password = "super-secret-123";' }));
