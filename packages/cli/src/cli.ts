@@ -378,13 +378,17 @@ function main(): void {
     .description("Write .cursor/mcp.json for Cursor IDE")
     .action(() => cmdConfigCursor().catch((err) => { console.error(err); process.exit(1); }));
 
-  program
-    .command("server start")
+  const server = program
+    .command("server")
+    .description("Manage the Qunoqu REST API server (start/stop)");
+
+  server
+    .command("start")
     .description("Start the REST API server (localhost:7384)")
     .action(() => cmdServerStart().catch((err) => { console.error(err); process.exit(1); }));
 
-  program
-    .command("server stop")
+  server
+    .command("stop")
     .description("Stop the REST API server")
     .action(() => {
       try {
