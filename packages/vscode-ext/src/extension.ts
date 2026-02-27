@@ -83,16 +83,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   fileWatcher.on("error", (err: unknown) => {
     console.error("[qunoqu] FileWatcher error:", err);
   });
-  fileWatcher.on(CONTEXT_CAPTURED_EVENT, (items: Array<{ content: string; filePath: string; type: string; projectId: string }>) => {
+  fileWatcher.on(CONTEXT_CAPTURED_EVENT, (items: Array<{ content: string; filePath: string; type: string; projectId: string; timestamp?: number }>) => {
     if (!metadataStore || !projectId) return;
     for (const item of items) {
+      const contextItem = {
+        type: item.type as "function" | "class" | "todo" | "import" | "architecture-decision",
+        content: item.content,
+        filePath: item.filePath,
+        timestamp: item.timestamp ?? Date.now(),
+        projectId: item.projectId,
+      };
+      const filtered = c.filterContextItem(contextItem, root);
+      if (!filtered) continue;
       try {
         metadataStore.insertContextItem({
           project_id: projectId,
           type: toStoreType(),
-          content: item.content,
-          file_path: item.filePath || null,
-          tags: [item.type],
+          content: filtered.content,
+          file_path: filtered.filePath || null,
+          tags: [filtered.type],
         });
       } catch (e) {
         console.error("[qunoqu] insertContextItem error:", e);
