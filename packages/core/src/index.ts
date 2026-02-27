@@ -41,3 +41,11 @@ export type {
 export { QunoqMCPServer, CLAUDE_DESKTOP_MCP_CONFIG } from "./QunoqMCPServer.js";
 export type { QunoqMCPServerOptions } from "./QunoqMCPServer.js";
 export { detectProjectId } from "./ProjectDetector.js";
+export {
+  createApp,
+  startServer,
+  ensureApiToken,
+  getApiTokenPath,
+  DEFAULT_API_PID_PATH,
+} from "./server.js";
+export type { ServerOptions, CreateAppOptions, ContextItemApi } from "./server.js";
