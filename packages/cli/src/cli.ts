@@ -43,22 +43,6 @@ function getProjectRoot(): string {
   }
 }
 
-function resolveRunMcpPath(cwd: string): string {
-  const cliDir = dirname(fileURLToPath(import.meta.url));
-  const siblingCoreRunMcp = join(cliDir, "..", "..", "core", "dist", "run-mcp.js");
-  if (existsSync(siblingCoreRunMcp)) return siblingCoreRunMcp;
-  const require = createRequire(import.meta.url);
-  for (const p of [cwd, join(cliDir, "..", "..", ".."), join(cliDir, "..")]) {
-    try {
-      const corePkgPath = require.resolve("@qunoqu/core/package.json", { paths: [p] });
-      return join(dirname(corePkgPath), "dist", "run-mcp.js");
-    } catch {
-      continue;
-    }
-  }
-  throw new Error("Could not resolve @qunoqu/core.");
-}
-
 async function loadConfig(projectRoot: string): Promise<QunoquConfig | null> {
   const path = join(projectRoot, CONFIG_FILENAME);
   if (!existsSync(path)) return null;
@@ -269,37 +253,6 @@ async function cmdDoctor(): Promise<void> {
     if (!c.ok) console.log(chalk.dim(`    → ${c.fix}`));
   }
   console.log("");
-}
-
-async function cmdConfigCursor(): Promise<void> {
-  const cwd = process.cwd();
-  const cursorDir = join(cwd, ".cursor");
-  const mcpPath = join(cursorDir, "mcp.json");
-
-  let runMcpPath: string;
-  try {
-    runMcpPath = resolveRunMcpPath(cwd);
-  } catch {
-    console.error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed.");
-    process.exit(1);
-  }
-
-  const projectId = detectProjectId(cwd);
-  const config = {
-    mcpServers: {
-      qunoqu: {
-        command: "node",
-        args: [runMcpPath],
-        env: { QUNOQU_PROJECT_ID: projectId },
-      },
-    },
-  };
-
-  await mkdir(cursorDir, { recursive: true });
-  await writeFile(mcpPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log("Wrote", mcpPath);
-  console.log("  QUNOQU_PROJECT_ID:", projectId);
-  console.log("Restart Cursor for the MCP server to load.");
 }
 
 /** Resolve path to @qunoqu/core dist/run-mcp.js (works when cli depends on core or monorepo sibling). */
