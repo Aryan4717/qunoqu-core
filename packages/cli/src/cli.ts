@@ -11,6 +11,9 @@ import {
   detectProjectId,
   SHELL_INTEGRATION_SCRIPT,
   MetadataStore,
+  createRestApiServer,
+  getOrCreateApiTokenForServer,
+  getApiTokenPath,
 } from "@qunoqu/core";
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { existsSync } from "fs";
@@ -18,7 +21,7 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 
 const QUNOQU_DIR = join(homedir(), ".qunoqu");
 const SHELL_SCRIPT_PATH = join(QUNOQU_DIR, "shell-integration.sh");
@@ -271,11 +274,26 @@ async function cmdDoctor(): Promise<void> {
   console.log("");
 }
 
+function resolveRunRestServerPath(cwd: string): string {
+  const cliDir = dirname(fileURLToPath(import.meta.url));
+  const sibling = join(cliDir, "..", "..", "core", "dist", "run-rest-server.js");
+  if (existsSync(sibling)) return sibling;
+  const require = createRequire(import.meta.url);
+  for (const p of [cwd, join(cliDir, "..", "..", ".."), join(cliDir, "..")]) {
+    try {
+      const corePkgPath = require.resolve("@qunoqu/core/package.json", { paths: [p] });
+      return join(dirname(corePkgPath), "dist", "run-rest-server.js");
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("Could not resolve @qunoqu/core.");
+}
+
 async function cmdConfigCursor(): Promise<void> {
   const cwd = process.cwd();
   const cursorDir = join(cwd, ".cursor");
   const mcpPath = join(cursorDir, "mcp.json");
-
   let runMcpPath: string;
   try {
     runMcpPath = resolveRunMcpPath(cwd);
@@ -283,7 +301,6 @@ async function cmdConfigCursor(): Promise<void> {
     console.error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed.");
     process.exit(1);
   }
-
   const projectId = detectProjectId(cwd);
   const config = {
     mcpServers: {
@@ -294,7 +311,6 @@ async function cmdConfigCursor(): Promise<void> {
       },
     },
   };
-
   await mkdir(cursorDir, { recursive: true });
   await writeFile(mcpPath, JSON.stringify(config, null, 2), "utf-8");
   console.log("Wrote", mcpPath);
@@ -302,57 +318,65 @@ async function cmdConfigCursor(): Promise<void> {
   console.log("Restart Cursor for the MCP server to load.");
 }
 
-/** Resolve path to @qunoqu/core dist/run-mcp.js (works when cli depends on core or monorepo sibling). */
-function resolveRunMcpPath(cwd: string): string {
-  const cliDir = dirname(fileURLToPath(import.meta.url));
-  // Monorepo: CLI at packages/cli/dist -> core at packages/core/dist/run-mcp.js
-  const siblingCoreRunMcp = join(cliDir, "..", "..", "core", "dist", "run-mcp.js");
-  if (existsSync(siblingCoreRunMcp)) return siblingCoreRunMcp;
+const SERVER_PID_FILE = join(QUNOQU_DIR, "server.pid");
 
-  const require = createRequire(import.meta.url);
-  const searchPaths = [cwd, join(cliDir, "..", "..", ".."), join(cliDir, "..")];
-  for (const p of searchPaths) {
+async function cmdServerStart(background: boolean): Promise<void> {
+  const port = parseInt(process.env.QUNOQU_API_PORT ?? "7384", 10);
+  if (background) {
+    let runRestPath: string;
     try {
-      const corePkgPath = require.resolve("@qunoqu/core/package.json", { paths: [p] });
-      return join(dirname(corePkgPath), "dist", "run-mcp.js");
+      runRestPath = resolveRunRestServerPath(process.cwd());
     } catch {
-      continue;
+      console.error("Could not resolve @qunoqu/core.");
+      process.exit(1);
+    }
+    const child = spawn(process.execPath, [runRestPath], {
+      env: { ...process.env, QUNOQU_API_PORT: String(port) },
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+    await mkdir(QUNOQU_DIR, { recursive: true });
+    await writeFile(SERVER_PID_FILE, String(child.pid!), "utf-8");
+    console.log(`Qunoqu REST API started in background (PID ${child.pid}). Port ${port}. Token: ${getApiTokenPath()}`);
+    return;
+  }
+  getOrCreateApiTokenForServer();
+  console.log(`Qunoqu REST API starting on http://localhost:${port}. Token file: ${getApiTokenPath()}`);
+  console.log("Press Ctrl+C to stop.");
+  const { server } = createRestApiServer({ port });
+  server.on("error", (err: Error) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+async function cmdServerStop(): Promise<void> {
+  if (!existsSync(SERVER_PID_FILE)) {
+    console.log("No PID file found. Server may not be running in background.");
+    return;
+  }
+  const pid = parseInt(await readFile(SERVER_PID_FILE, "utf-8"), 10);
+  if (Number.isNaN(pid)) {
+    console.error("Invalid PID file.");
+    return;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+    const { unlink } = await import("fs/promises");
+    await unlink(SERVER_PID_FILE);
+    console.log(`Stopped Qunoqu REST API (PID ${pid}).`);
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err?.code === "ESRCH") {
+      console.log(`Process ${pid} not running. Removed stale PID file.`);
+      const { unlink } = await import("fs/promises");
+      await unlink(SERVER_PID_FILE).catch(() => {});
+    } else {
+      console.error("Failed to stop server:", err?.message ?? e);
+      process.exit(1);
     }
   }
-  throw new Error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core).");
-}
-
-async function cmdConfigCursor(): Promise<void> {
-  const cwd = process.cwd();
-  const cursorDir = join(cwd, ".cursor");
-  const mcpPath = join(cursorDir, "mcp.json");
-
-  let runMcpPath: string;
-  try {
-    runMcpPath = resolveRunMcpPath(cwd);
-  } catch {
-    console.error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core).");
-    process.exit(1);
-  }
-
-  const projectId = detectProjectId(cwd);
-  const config = {
-    mcpServers: {
-      qunoqu: {
-        command: "node",
-        args: [runMcpPath],
-        env: { QUNOQU_PROJECT_ID: projectId },
-      },
-    },
-  };
-
-  await mkdir(cursorDir, { recursive: true });
-  await writeFile(mcpPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log("Wrote", mcpPath);
-  console.log("  QUNOQU_PROJECT_ID:", projectId);
-  console.log("  Run MCP script:", runMcpPath);
-  console.log("");
-  console.log("Restart Cursor for the MCP server to load.");
 }
 
 function main(): void {
@@ -385,6 +409,22 @@ function main(): void {
     .command("config cursor")
     .description("Write .cursor/mcp.json for Cursor IDE")
     .action(() => cmdConfigCursor().catch((err) => { console.error(err); process.exit(1); }));
+
+  const serverCmd = program.command("server").description("REST API server (for ChatGPT/DeepSeek)");
+  serverCmd
+    .command("start")
+    .description("Start the REST API server (foreground)")
+    .option("--background", "Run in background and write PID to ~/.qunoqu/server.pid")
+    .action((opts: { background?: boolean }) =>
+      cmdServerStart(!!opts.background).catch((err) => {
+        console.error(err);
+        process.exit(1);
+      })
+    );
+  serverCmd
+    .command("stop")
+    .description("Stop the REST API server (when run with --background)")
+    .action(() => cmdServerStop().catch((err) => { console.error(err); process.exit(1); }));
 
   program.parse(process.argv);
 
