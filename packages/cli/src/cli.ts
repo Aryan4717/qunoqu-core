@@ -11,9 +11,12 @@ import {
   detectProjectId,
   SHELL_INTEGRATION_SCRIPT,
   MetadataStore,
+  startServer,
+  ensureApiToken,
+  DEFAULT_API_PID_PATH,
 } from "@qunoqu/core";
 import { mkdir, writeFile, readFile } from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
@@ -308,6 +311,42 @@ async function cmdConfigCursor(): Promise<void> {
   console.log("Restart Cursor for the MCP server to load.");
 }
 
+async function cmdServerStart(): Promise<void> {
+  ensureApiToken();
+  const { server, port } = await startServer();
+  writeFileSync(DEFAULT_API_PID_PATH, String(process.pid), "utf-8");
+  server.on("close", () => {
+    try {
+      unlinkSync(DEFAULT_API_PID_PATH);
+    } catch {
+      // ignore
+    }
+  });
+  console.log(chalk.green("Qunoqu REST API listening on"), chalk.cyan(`http://localhost:${port}`));
+  console.log(chalk.dim("Token: ~/.qunoqu/api-token (use as Bearer token)"));
+  console.log(chalk.dim("Stop with: qunoqu server stop"));
+}
+
+function cmdServerStop(): void {
+  if (!existsSync(DEFAULT_API_PID_PATH)) {
+    console.log(chalk.yellow("No pid file found. Server may not be running."));
+    return;
+  }
+  try {
+    const pid = parseInt(readFileSync(DEFAULT_API_PID_PATH, "utf-8").trim(), 10);
+    process.kill(pid, "SIGTERM");
+    unlinkSync(DEFAULT_API_PID_PATH);
+    console.log(chalk.green("Server stopped."));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === "ESRCH") {
+      unlinkSync(DEFAULT_API_PID_PATH);
+      console.log(chalk.yellow("Process was not running; cleaned pid file."));
+    } else {
+      throw e;
+    }
+  }
+}
+
 function main(): void {
   program
     .name("qunoqu")
@@ -338,6 +377,23 @@ function main(): void {
     .command("config cursor")
     .description("Write .cursor/mcp.json for Cursor IDE")
     .action(() => cmdConfigCursor().catch((err) => { console.error(err); process.exit(1); }));
+
+  program
+    .command("server start")
+    .description("Start the REST API server (localhost:7384)")
+    .action(() => cmdServerStart().catch((err) => { console.error(err); process.exit(1); }));
+
+  program
+    .command("server stop")
+    .description("Stop the REST API server")
+    .action(() => {
+      try {
+        cmdServerStop();
+      } catch (err) {
+        console.error(err);
+        process.exit(1);
+      }
+    });
 
   program.parse(process.argv);
 
