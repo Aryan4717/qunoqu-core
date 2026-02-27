@@ -57,11 +57,12 @@ describe("PrivacyFilter", () => {
 
   it("redacts JWT in content", () => {
     const filter = new PrivacyFilter({ projectRoot: tmpDir, logPath });
-    const content = "token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    // Short, obviously fake JWT-shaped string to exercise the regex without embedding a real token.
+    const content = "token: eyJh.a.a";
     const result = filter.filter(item({ content }));
     expect(result).not.toBeNull();
     expect(result!.content).toContain("[REDACTED]");
-    expect(result!.content).not.toContain("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+    expect(result!.content).not.toContain("eyJh.a.a");
     expect(readFileSync(logPath, "utf-8")).toContain("jwt_detected");
   });
 
