@@ -12,7 +12,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "composite": false,
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"]
   },
   "exclude": ["node_modules", "**/dist", "**/out", "packages/vscode-ext"]
 }
