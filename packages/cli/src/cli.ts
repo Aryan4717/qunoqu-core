@@ -70,6 +70,25 @@ async function loadConfig(projectRoot: string): Promise<QunoquConfig | null> {
   }
 }
 
+/**
+ * Exact Cursor MCP config format (.cursor/mcp.json):
+ *
+ * {
+ *   "mcpServers": {
+ *     "qunoqu": {
+ *       "command": "node",
+ *       "args": ["/absolute/path/to/run-mcp.js"],
+ *       "env": {
+ *         "QUNOQU_PROJECT_ID": "<optional project id for default scope>"
+ *       }
+ *     }
+ *   }
+ * }
+ *
+ * Cursor reads project-level .cursor/mcp.json from the workspace root.
+ * Restart Cursor after changing this file.
+ */
+
 async function cmdInit(): Promise<void> {
   const root = getProjectRoot();
   const projectId = detectProjectId(root);
@@ -280,6 +299,59 @@ async function cmdConfigCursor(): Promise<void> {
   await writeFile(mcpPath, JSON.stringify(config, null, 2), "utf-8");
   console.log("Wrote", mcpPath);
   console.log("  QUNOQU_PROJECT_ID:", projectId);
+  console.log("Restart Cursor for the MCP server to load.");
+}
+
+/** Resolve path to @qunoqu/core dist/run-mcp.js (works when cli depends on core or monorepo sibling). */
+function resolveRunMcpPath(cwd: string): string {
+  const cliDir = dirname(fileURLToPath(import.meta.url));
+  // Monorepo: CLI at packages/cli/dist -> core at packages/core/dist/run-mcp.js
+  const siblingCoreRunMcp = join(cliDir, "..", "..", "core", "dist", "run-mcp.js");
+  if (existsSync(siblingCoreRunMcp)) return siblingCoreRunMcp;
+
+  const require = createRequire(import.meta.url);
+  const searchPaths = [cwd, join(cliDir, "..", "..", ".."), join(cliDir, "..")];
+  for (const p of searchPaths) {
+    try {
+      const corePkgPath = require.resolve("@qunoqu/core/package.json", { paths: [p] });
+      return join(dirname(corePkgPath), "dist", "run-mcp.js");
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core).");
+}
+
+async function cmdConfigCursor(): Promise<void> {
+  const cwd = process.cwd();
+  const cursorDir = join(cwd, ".cursor");
+  const mcpPath = join(cursorDir, "mcp.json");
+
+  let runMcpPath: string;
+  try {
+    runMcpPath = resolveRunMcpPath(cwd);
+  } catch {
+    console.error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core).");
+    process.exit(1);
+  }
+
+  const projectId = detectProjectId(cwd);
+  const config = {
+    mcpServers: {
+      qunoqu: {
+        command: "node",
+        args: [runMcpPath],
+        env: { QUNOQU_PROJECT_ID: projectId },
+      },
+    },
+  };
+
+  await mkdir(cursorDir, { recursive: true });
+  await writeFile(mcpPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log("Wrote", mcpPath);
+  console.log("  QUNOQU_PROJECT_ID:", projectId);
+  console.log("  Run MCP script:", runMcpPath);
+  console.log("");
   console.log("Restart Cursor for the MCP server to load.");
 }
 
