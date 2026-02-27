@@ -74,7 +74,8 @@ describe("PrivacyFilter", () => {
 
   it("redacts private key block", () => {
     const filter = new PrivacyFilter({ projectRoot: tmpDir, logPath });
-    const content = "key:\n-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBg\n-----END PRIVATE KEY-----";
+    // Fake private key block to exercise the regex without using a real key.
+    const content = "key:\n-----BEGIN PRIVATE KEY-----\nFAKE-KEY-DATA\n-----END PRIVATE KEY-----";
     const result = filter.filter(item({ content }));
     expect(result).not.toBeNull();
     expect(result!.content).toContain("[REDACTED]");
