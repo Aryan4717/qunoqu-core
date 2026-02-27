@@ -9,6 +9,7 @@ import { EventEmitter } from "events";
 import { extractContext } from "./extractContext.js";
 import type { ContextItem } from "./types.js";
 import { DEFAULT_IGNORE_PATTERNS } from "./types.js";
+import { filterContextItem } from "./PrivacyFilter.js";
 
 export const CONTEXT_CAPTURED_EVENT = "context-captured";
 
@@ -90,7 +91,10 @@ export class FileWatcher extends EventEmitter {
     if (prev === hash) return;
     this.hashCache.set(filePath, hash);
 
-    const items = extractContext(content, filePath, this.projectId);
+    const rawItems = extractContext(content, filePath, this.projectId);
+    const items = rawItems
+      .map((item) => filterContextItem(item, this.projectDir || undefined))
+      .filter((x): x is ContextItem => x !== null);
     if (items.length > 0) {
       super.emit(CONTEXT_CAPTURED_EVENT, items);
     }

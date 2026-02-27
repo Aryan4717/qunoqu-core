@@ -41,3 +41,18 @@ export type {
 export { QunoqMCPServer, CLAUDE_DESKTOP_MCP_CONFIG } from "./QunoqMCPServer.js";
 export type { QunoqMCPServerOptions } from "./QunoqMCPServer.js";
 export { detectProjectId } from "./ProjectDetector.js";
+export {
+  PrivacyFilter,
+  filterContextItem,
+  getPrivacyLogPath,
+  DEFAULT_IGNORE_PATTERNS as PRIVACY_DEFAULT_IGNORE_PATTERNS,
+} from "./PrivacyFilter.js";
+export type { PrivacyFilterOptions, PrivacyLogReason } from "./PrivacyFilter.js";
+export {
+  createApp,
+  startServer,
+  ensureApiToken,
+  getApiTokenPath,
+  DEFAULT_API_PID_PATH,
+} from "./server.js";
+export type { ServerOptions, CreateAppOptions, ContextItemApi } from "./server.js";
