@@ -2,21 +2,28 @@
   "name": "vscode-ext",
   "displayName": "Qunoqu",
   "version": "0.0.0",
-  "description": "Qunoqu VS Code extension",
+  "description": "Qunoqu – developer memory for AI. Capture, recall, and save decisions from the editor.",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "qunoqu.hello",
-        "title": "Qunoqu: Hello"
+        "command": "qunoqu.recall",
+        "title": "Qunoqu: Recall (search memories)"
+      },
+      {
+        "command": "qunoqu.saveDecision",
+        "title": "Qunoqu: Save decision"
       }
-    ]
+    ],
+    "configuration": {}
   },
-  "main": "./out/extension.js",
   "scripts": {
     "build": "tsc -p .",
     "test": "vitest run",
