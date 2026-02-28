@@ -60,6 +60,19 @@ async function loadConfig(projectRoot: string): Promise<QunoquConfig | null> {
   }
 }
 
+async function getProjectId(root: string): Promise<string> {
+  const configPath = join(root, CONFIG_FILENAME);
+  try {
+    if (existsSync(configPath)) {
+      const config = JSON.parse(await readFile(configPath, "utf-8"));
+      if (config.projectId) return config.projectId;
+    }
+  } catch {
+    /* fall through */
+  }
+  return detectProjectId(root);
+}
+
 function detectToolPath(cmd: string): string | null {
   try {
     const which = process.platform === "win32" ? "where" : "which";
@@ -760,7 +773,7 @@ async function cmdConfigCursor(): Promise<void> {
     process.exit(1);
   }
 
-  const projectId = (await loadConfig(cwd))?.projectId ?? detectProjectId(cwd);
+  const projectId = await getProjectId(cwd);
   const config = {
     mcpServers: {
       qunoqu: {
@@ -812,7 +825,7 @@ async function cmdConfigClaudeDesktop(): Promise<void> {
     throw e;
   }
 
-  const projectId = detectProjectId(process.cwd());
+  const projectId = await getProjectId(process.cwd());
   config.mcpServers = {
     ...(typeof config.mcpServers === "object" && config.mcpServers !== null ? config.mcpServers : {}),
     qunoqu: {
@@ -871,7 +884,7 @@ async function cmdConfigGemini(): Promise<void> {
     console.error("Could not resolve @qunoqu/core. Run: npm run build");
     process.exit(1);
   }
-  const projectId = detectProjectId(process.cwd());
+  const projectId = await getProjectId(process.cwd());
   const geminiDir = join(homedir(), ".gemini");
   const configPath = join(geminiDir, "settings.json");
 
