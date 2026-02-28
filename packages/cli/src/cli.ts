@@ -175,6 +175,7 @@ async function cmdInit(): Promise<void> {
     await writeFile(join(root, CONFIG_FILENAME), JSON.stringify(config, null, 2), "utf-8");
 
     spinner.succeed("Qunoqu initialized.");
+    await cmdInitAiContext();
   } catch (e) {
     spinner.fail("Init failed.");
     throw e;
@@ -195,6 +196,343 @@ async function cmdInit(): Promise<void> {
   ].join("\n");
 
   console.log(boxen(msg, { padding: 1, borderColor: "green" }));
+}
+
+async function cmdInitAiContext(): Promise<void> {
+  const root = getProjectRoot();
+
+  const cursorrules = `# Qunoqu Memory — 4 MCP Tools, Always Automatic
+
+This project uses Qunoqu memory. You have 4 MCP tools available.
+NEVER ask the user to call any tool manually.
+NEVER use tool names in conversation.
+Handle everything automatically and silently.
+
+---
+
+## Tool 1 — recall_context
+PURPOSE: Search project memory by keyword or natural language.
+Searches both SQLite (keyword) and ChromaDB (semantic) simultaneously.
+
+WHEN TO USE AUTOMATICALLY:
+Always call recall_context first before answering when user asks:
+- Why something was built or chosen a certain way
+- How something works in this project
+- What decisions were made about anything
+- Architecture, design, technology choices
+- Past problems, bugs, or solutions
+- Performance, scaling, infrastructure decisions
+- Any question containing "why", "how", "what was", "what did we"
+- Any question about this codebase specifically
+
+HOW TO USE:
+- Extract the key topic from the user question as the query
+- Use specific keywords: "WebSockets", "authentication", "database"
+- Use topK=10 for broad questions, topK=5 for specific ones
+- If first search returns nothing, try broader keywords
+
+EXAMPLES:
+User: "why did we choose WebSockets?"
+→ call recall_context query="WebSockets" topK=5
+
+User: "how is authentication structured?"
+→ call recall_context query="authentication auth login" topK=5
+
+User: "what performance decisions did we make?"
+→ call recall_context query="performance latency speed" topK=10
+
+User: "why is the DB structured this way?"
+→ call recall_context query="database schema structure" topK=5
+
+User: "what problems did we solve in Sprint 2?"
+→ call recall_context query="Sprint 2 problems solutions" topK=10
+
+---
+
+## Tool 2 — save_decision
+PURPOSE: Save an important technical decision permanently to memory.
+Stores in both SQLite and KnowledgeGraph simultaneously.
+
+WHEN TO USE AUTOMATICALLY (without asking):
+Call save_decision silently whenever user says:
+- "we decided to..."
+- "we chose X because..."
+- "we are going with X"
+- "let's use X instead of Y"
+- "we will use X"
+- "I decided..."
+- "going with X because..."
+- "X was chosen because..."
+- "we picked X over Y because..."
+- "the reason we use X is..."
+- any sentence that explains WHY a technical choice was made
+
+HOW TO EXTRACT:
+- title: 5-10 words, starts with a verb ("Use X", "Choose X over Y", "Switch to X")
+- rationale: the complete reason given, keep all details
+
+AFTER SAVING:
+Add this line at end of response: "💾 Saved to Qunoqu memory"
+Do NOT interrupt conversation or ask permission first.
+
+EXAMPLES:
+User: "we are going with Postgres because Redis doesn't persist well"
+→ call save_decision:
+  title: "Use Postgres over Redis"
+  rationale: "Redis doesn't persist data well enough for our use case"
+→ add: "💾 Saved to Qunoqu memory"
+
+User: "let's use WebSockets instead of polling — polling adds 500ms"
+→ call save_decision:
+  title: "Use WebSockets over polling"
+  rationale: "Polling adds 500ms latency. WebSockets stream instantly."
+→ add: "💾 Saved to Qunoqu memory"
+
+User: "we decided TypeScript strict mode — catches bugs at compile time"
+→ call save_decision:
+  title: "Use TypeScript strict mode"
+  rationale: "Catches bugs at compile time, reduces runtime errors"
+→ add: "💾 Saved to Qunoqu memory"
+
+OFFER TO SAVE (ask once, save immediately if yes):
+After any important technical discussion where a decision was reached
+but trigger phrases were not used, add at end of response:
+"Want me to save this decision to Qunoqu memory? (yes/no)"
+If user says yes → call save_decision immediately, no more questions.
+
+---
+
+## Tool 3 — get_project_summary
+PURPOSE: Returns last 10 context items, all decisions, knowledge 
+graph nodes, total stats for a project.
+
+WHEN TO USE AUTOMATICALLY:
+Call get_project_summary when user says:
+- "give me an overview of this project"
+- "what do we have in memory?"
+- "summarize the project"
+- "what decisions have we made?"
+- "show me everything stored"
+- "what has been captured?"
+- "project summary"
+- "what does qunoqu know about this project?"
+
+EXAMPLES:
+User: "give me a project overview"
+→ call get_project_summary then summarize clearly
+
+User: "what decisions have we made so far?"
+→ call get_project_summary then list just the decisions section
+
+User: "what does qunoqu know about this project?"
+→ call get_project_summary then show all sections
+
+---
+
+## Tool 4 — list_projects
+PURPOSE: Lists all projects in Qunoqu memory with context counts 
+and last active timestamps.
+
+WHEN TO USE AUTOMATICALLY:
+Call list_projects when user says:
+- "what projects are in memory?"
+- "list all projects"
+- "what projects does qunoqu know about?"
+- "show me all projects"
+- "which projects are tracked?"
+- "how many projects does qunoqu have?"
+
+EXAMPLES:
+User: "what projects are in qunoqu?"
+→ call list_projects then show results
+
+User: "how many projects are being tracked?"
+→ call list_projects then count and summarize
+
+---
+
+## Golden Rules
+
+1. NEVER use tool names in conversation ("recall_context", 
+   "save_decision" etc). Just use them silently.
+2. NEVER ask permission to recall — just do it.
+3. NEVER ask permission to save when trigger phrases are used — 
+   just save silently and add 💾.
+4. ALWAYS try recall_context before answering project questions.
+5. If recall returns nothing useful, say "Nothing found in project 
+   memory for this topic" then answer from code context.
+6. Chain tools when needed: recall first, if empty try 
+   get_project_summary for broader context.`;
+
+  const claudeMd = `# Qunoqu Project Memory — 4 MCP Tools
+
+This project uses Qunoqu memory. You have 4 MCP tools.
+Never ask the user to call tools manually. Handle automatically.
+
+## Tool 1 — recall_context
+Search project memory before answering ANY project question.
+
+AUTO-TRIGGER when user asks about:
+- Why something was built or chosen
+- How something works in this codebase
+- What decisions were made
+- Architecture, design, technology choices
+- Past problems or solutions
+- Any "why", "how", "what was", "what did we" question
+
+USAGE: Extract keywords from question, call recall_context.
+If nothing found, try broader keywords before giving up.
+
+Examples:
+- "why WebSockets?" → recall_context("WebSockets latency")
+- "how does auth work?" → recall_context("authentication auth")
+- "what DB did we pick?" → recall_context("database")
+- "past performance issues?" → recall_context("performance latency")
+
+## Tool 2 — save_decision
+Save decisions automatically without asking.
+
+AUTO-TRIGGER on phrases:
+"we decided", "we chose X because", "we are going with",
+"let's use X instead of", "we will use", "going with X because",
+"the reason we use X", "we picked X over Y because"
+
+Extract: title (5-10 words), rationale (full reason)
+After saving add: "💾 Saved to Qunoqu memory"
+
+Examples:
+- "we chose SQLite because zero infrastructure" 
+  → save title="Use SQLite" rationale="Zero infrastructure needed"
+  → "💾 Saved to Qunoqu memory"
+
+- "going with Express over Fastify — team knows it better"
+  → save title="Use Express over Fastify"
+  → rationale="Team is more familiar with Express"
+  → "💾 Saved to Qunoqu memory"
+
+OFFER TO SAVE after important technical discussions:
+"Want me to save this to Qunoqu memory?"
+Save immediately if yes.
+
+## Tool 3 — get_project_summary
+AUTO-TRIGGER when user asks:
+"project overview", "what's in memory", "summarize project",
+"what decisions have we made", "what has been captured",
+"what does qunoqu know"
+
+## Tool 4 — list_projects
+AUTO-TRIGGER when user asks:
+"what projects are in qunoqu", "list projects",
+"how many projects tracked", "show all projects"
+
+## Golden Rules
+1. Never use tool names in conversation
+2. Never ask permission to recall — just do it
+3. Never ask permission to save on trigger phrases — save silently
+4. Always recall before answering project questions
+5. Chain tools: recall first → if empty → get_project_summary`;
+
+  const geminiMd = `# Qunoqu Project Memory — 4 MCP Tools
+
+This project uses Qunoqu memory. You have 4 MCP tools.
+Always approve and use them automatically. Never ask user to 
+trigger tools manually.
+
+## Tool 1 — recall_context
+Search project memory before answering ANY project question.
+
+AUTO-TRIGGER when user asks about:
+- Why something was chosen or built a certain way
+- How a specific part works
+- What decisions were made
+- Architecture, design, technology choices
+- Past problems or solutions
+- Any "why", "how did we", "what was the reason" question
+
+USAGE: Extract topic keywords, call recall_context.
+Try broader keywords if first search returns nothing.
+
+Examples:
+- "why Postgres?" → recall_context("Postgres database")
+- "how is caching done?" → recall_context("caching cache")
+- "what auth solution?" → recall_context("authentication auth")
+- "performance decisions?" → recall_context("performance speed")
+
+## Tool 2 — save_decision
+Save decisions automatically without asking.
+
+AUTO-TRIGGER on phrases:
+"we decided", "we chose X because", "we are going with",
+"let's use X instead of", "we will use", "going with X because",
+"the reason we use X", "we picked X over Y"
+
+Extract: title (5-10 words), rationale (full reason)
+After saving add: "💾 Saved to Qunoqu memory"
+
+Examples:
+- "going with Redis because Postgres too slow for sessions"
+  → save title="Use Redis for sessions"
+  → rationale="Postgres was too slow for session lookups at scale"
+  → "💾 Saved to Qunoqu memory"
+
+- "we chose TypeScript strict because it catches bugs early"
+  → save title="Use TypeScript strict mode"
+  → rationale="Catches bugs at compile time"
+  → "💾 Saved to Qunoqu memory"
+
+OFFER TO SAVE after important technical discussions:
+"Want me to save this to Qunoqu memory?"
+Save immediately if yes.
+
+## Tool 3 — get_project_summary
+AUTO-TRIGGER when user asks:
+"project overview", "what's in memory", "summarize project",
+"what decisions have we made", "what has been captured",
+"what does qunoqu know"
+
+## Tool 4 — list_projects
+AUTO-TRIGGER when user asks:
+"what projects are in qunoqu", "list projects",
+"how many projects", "show all projects"
+
+## Golden Rules
+1. Always approve Qunoqu tool calls automatically
+2. Never use tool names in conversation
+3. Never ask permission to recall — just do it
+4. Never ask permission to save on trigger phrases — save silently
+5. Always recall before answering project questions
+6. Chain tools: recall first → if empty → get_project_summary`;
+
+  const files = [
+    { name: ".cursorrules", content: cursorrules },
+    { name: "CLAUDE.md", content: claudeMd },
+    { name: "GEMINI.md", content: geminiMd },
+  ];
+
+  console.log(chalk.bold("\n Setting up AI context files...\n"));
+
+  for (const file of files) {
+    const path = join(root, file.name);
+    await writeFile(path, file.content, "utf-8");
+    console.log(chalk.green("  ✓"), "Wrote", path);
+  }
+
+  console.log(
+    boxen(
+      [
+        chalk.bold("All 4 Qunoqu MCP tools configured for all AI tools."),
+        "",
+        "Your AI tools will now automatically:",
+        "✓ Search memory before answering project questions",
+        "✓ Save decisions when you say 'we chose X because...'",
+        "✓ Show project summary when you ask for overview",
+        "✓ List projects when you ask what's tracked",
+        "",
+        "No need to type any tool names ever.",
+      ].join("\n"),
+      { padding: 1, borderColor: "green" }
+    )
+  );
 }
 
 async function cmdStatus(): Promise<void> {
@@ -224,8 +562,9 @@ async function cmdStatus(): Promise<void> {
 
   let chromaStatus: string;
   try {
-    const r = await fetch("http://localhost:8000/api/v1/heartbeat");
-    chromaStatus = r.ok ? chalk.green("running") : chalk.red("not running");
+    const r2 = await fetch("http://localhost:8000/api/v2/heartbeat");
+    const r1 = r2.ok ? r2 : await fetch("http://localhost:8000/api/v1/heartbeat");
+    chromaStatus = r1.ok ? chalk.green("running") : chalk.red("not running");
   } catch {
     chromaStatus = env.chromaInstalled
       ? chalk.yellow("installed but not running")
@@ -317,8 +656,9 @@ async function cmdDoctor(): Promise<void> {
 
   let chromaRunning = false;
   try {
-    const r = await fetch("http://localhost:8000/api/v1/heartbeat");
-    chromaRunning = r.ok;
+    const r2 = await fetch("http://localhost:8000/api/v2/heartbeat");
+    const r1 = r2.ok ? r2 : await fetch("http://localhost:8000/api/v1/heartbeat");
+    chromaRunning = r1.ok;
   } catch {
     /* not running */
   }
@@ -326,8 +666,8 @@ async function cmdDoctor(): Promise<void> {
     name: "ChromaDB running",
     ok: chromaRunning,
     fix: env.chromaInstalled
-      ? "ChromaDB installed but not running. Start with: chroma run --path ~/.qunoqu/chroma"
-      : "Install with: pip install chromadb then run: chroma run --path ~/.qunoqu/chroma",
+      ? "ChromaDB installed but not running. Start with: npx chroma run --path ~/.qunoqu/chroma (from repo root)"
+      : "From repo root: npx chroma run --path ~/.qunoqu/chroma (or: pip install chromadb && chroma run --path ~/.qunoqu/chroma)",
   });
 
   const shellScript = env.os === "windows"
@@ -420,7 +760,7 @@ async function cmdConfigCursor(): Promise<void> {
     process.exit(1);
   }
 
-  const projectId = detectProjectId(cwd);
+  const projectId = (await loadConfig(cwd))?.projectId ?? detectProjectId(cwd);
   const config = {
     mcpServers: {
       qunoqu: {
@@ -675,6 +1015,11 @@ function main(): void {
     .command("init")
     .description("Set up project, shell integration, and config")
     .action(() => cmdInit().catch((err) => { console.error(err); process.exit(1); }));
+
+  program
+    .command("init-ai-context")
+    .description("Create .cursorrules, CLAUDE.md, GEMINI.md so AI tools automatically use Qunoqu memory")
+    .action(() => cmdInitAiContext().catch((err) => { console.error(err); process.exit(1); }));
 
   program
     .command("status")

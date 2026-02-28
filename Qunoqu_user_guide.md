@@ -325,12 +325,22 @@ ollama pull nomic-embed-text
 
 ### Install ChromaDB
 
+**Option A — Use from Qunoqu repo (no Python needed):**
+
+```bash
+cd /path/to/qunoqu-core
+npx chroma run --path ~/.qunoqu/chroma
+```
+
+**Option B — Python:**
+
 ```bash
 pip install chromadb
-
-# Start ChromaDB
+# Ensure pip's bin is on PATH (e.g. ~/.local/bin or Python's Scripts folder), then:
 chroma run --path ~/.qunoqu/chroma
 ```
+
+If you get a permission error on `~/.qunoqu/chroma`, use a writable path instead, e.g. `--path /tmp/qunoqu-chroma`.
 
 ### Verify it's working
 
