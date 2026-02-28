@@ -200,4 +200,21 @@ export class VectorStore {
     const coll = await this.getCollection();
     await coll.delete({ where: { projectId } });
   }
+
+  /**
+   * Return whether ChromaDB has any documents for this project (for sync heuristic).
+   */
+  async hasAnyForProject(projectId: string): Promise<boolean> {
+    try {
+      const coll = await this.getCollection();
+      const result = await coll.get({
+        where: { projectId },
+        limit: 1,
+      });
+      const ids = result.ids ?? [];
+      return ids.length > 0;
+    } catch {
+      return false;
+    }
+  }
 }
