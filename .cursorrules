@@ -1,0 +1,162 @@
+# Qunoqu Memory — 4 MCP Tools, Always Automatic
+
+This project uses Qunoqu memory. You have 4 MCP tools available.
+NEVER ask the user to call any tool manually.
+NEVER use tool names in conversation.
+Handle everything automatically and silently.
+
+---
+
+## Tool 1 — recall_context
+PURPOSE: Search project memory by keyword or natural language.
+Searches both SQLite (keyword) and ChromaDB (semantic) simultaneously.
+
+WHEN TO USE AUTOMATICALLY:
+Always call recall_context first before answering when user asks:
+- Why something was built or chosen a certain way
+- How something works in this project
+- What decisions were made about anything
+- Architecture, design, technology choices
+- Past problems, bugs, or solutions
+- Performance, scaling, infrastructure decisions
+- Any question containing "why", "how", "what was", "what did we"
+- Any question about this codebase specifically
+
+HOW TO USE:
+- Extract the key topic from the user question as the query
+- Use specific keywords: "WebSockets", "authentication", "database"
+- Use topK=10 for broad questions, topK=5 for specific ones
+- If first search returns nothing, try broader keywords
+
+EXAMPLES:
+User: "why did we choose WebSockets?"
+→ call recall_context query="WebSockets" topK=5
+
+User: "how is authentication structured?"
+→ call recall_context query="authentication auth login" topK=5
+
+User: "what performance decisions did we make?"
+→ call recall_context query="performance latency speed" topK=10
+
+User: "why is the DB structured this way?"
+→ call recall_context query="database schema structure" topK=5
+
+User: "what problems did we solve in Sprint 2?"
+→ call recall_context query="Sprint 2 problems solutions" topK=10
+
+---
+
+## Tool 2 — save_decision
+PURPOSE: Save an important technical decision permanently to memory.
+Stores in both SQLite and KnowledgeGraph simultaneously.
+
+WHEN TO USE AUTOMATICALLY (without asking):
+Call save_decision silently whenever user says:
+- "we decided to..."
+- "we chose X because..."
+- "we are going with X"
+- "let's use X instead of Y"
+- "we will use X"
+- "I decided..."
+- "going with X because..."
+- "X was chosen because..."
+- "we picked X over Y because..."
+- "the reason we use X is..."
+- any sentence that explains WHY a technical choice was made
+
+HOW TO EXTRACT:
+- title: 5-10 words, starts with a verb ("Use X", "Choose X over Y", "Switch to X")
+- rationale: the complete reason given, keep all details
+
+AFTER SAVING:
+Add this line at end of response: "💾 Saved to Qunoqu memory"
+Do NOT interrupt conversation or ask permission first.
+
+EXAMPLES:
+User: "we are going with Postgres because Redis doesn't persist well"
+→ call save_decision:
+  title: "Use Postgres over Redis"
+  rationale: "Redis doesn't persist data well enough for our use case"
+→ add: "💾 Saved to Qunoqu memory"
+
+User: "let's use WebSockets instead of polling — polling adds 500ms"
+→ call save_decision:
+  title: "Use WebSockets over polling"
+  rationale: "Polling adds 500ms latency. WebSockets stream instantly."
+→ add: "💾 Saved to Qunoqu memory"
+
+User: "we decided TypeScript strict mode — catches bugs at compile time"
+→ call save_decision:
+  title: "Use TypeScript strict mode"
+  rationale: "Catches bugs at compile time, reduces runtime errors"
+→ add: "💾 Saved to Qunoqu memory"
+
+OFFER TO SAVE (ask once, save immediately if yes):
+After any important technical discussion where a decision was reached
+but trigger phrases were not used, add at end of response:
+"Want me to save this decision to Qunoqu memory? (yes/no)"
+If user says yes → call save_decision immediately, no more questions.
+
+---
+
+## Tool 3 — get_project_summary
+PURPOSE: Returns last 10 context items, all decisions, knowledge 
+graph nodes, total stats for a project.
+
+WHEN TO USE AUTOMATICALLY:
+Call get_project_summary when user says:
+- "give me an overview of this project"
+- "what do we have in memory?"
+- "summarize the project"
+- "what decisions have we made?"
+- "show me everything stored"
+- "what has been captured?"
+- "project summary"
+- "what does qunoqu know about this project?"
+
+EXAMPLES:
+User: "give me a project overview"
+→ call get_project_summary then summarize clearly
+
+User: "what decisions have we made so far?"
+→ call get_project_summary then list just the decisions section
+
+User: "what does qunoqu know about this project?"
+→ call get_project_summary then show all sections
+
+---
+
+## Tool 4 — list_projects
+PURPOSE: Lists all projects in Qunoqu memory with context counts 
+and last active timestamps.
+
+WHEN TO USE AUTOMATICALLY:
+Call list_projects when user says:
+- "what projects are in memory?"
+- "list all projects"
+- "what projects does qunoqu know about?"
+- "show me all projects"
+- "which projects are tracked?"
+- "how many projects does qunoqu have?"
+
+EXAMPLES:
+User: "what projects are in qunoqu?"
+→ call list_projects then show results
+
+User: "how many projects are being tracked?"
+→ call list_projects then count and summarize
+
+---
+
+## Golden Rules
+
+1. NEVER use tool names in conversation ("recall_context", 
+   "save_decision" etc). Just use them silently.
+2. NEVER ask permission to recall — just do it.
+3. NEVER ask permission to save when trigger phrases are used — 
+   just save silently and add 💾.
+4. ALWAYS try recall_context before answering project questions.
+5. If recall returns nothing useful, say "Nothing found in project 
+   memory for this topic" then answer from code context.
+6. Chain tools when needed: recall first, if empty try 
+   get_project_summary for broader context.
