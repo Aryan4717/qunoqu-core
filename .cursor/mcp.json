@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "qunoqu": {
-      "command": "node",
+      "command": "/opt/homebrew/Cellar/node/25.6.1_1/bin/node",
       "args": [
         "/Users/aryan/Desktop/qunoqu-core/packages/core/dist/run-mcp.js"
       ],
