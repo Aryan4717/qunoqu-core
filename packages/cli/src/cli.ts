@@ -28,6 +28,12 @@ const SHELL_SCRIPT_PATH = join(QUNOQU_DIR, "shell-integration.sh");
 const CONFIG_FILENAME = ".qunoqu-config.json";
 const CLI_VERSION = "0.0.0";
 
+const EXEC_OPTS: { encoding: "utf-8"; env: NodeJS.ProcessEnv; stdio: ("pipe" | "ignore")[] } = {
+  encoding: "utf-8",
+  env: { ...process.env },
+  stdio: ["pipe", "pipe", "ignore"],
+};
+
 export interface QunoquConfig {
   projectId: string;
   createdAt: number;
@@ -36,10 +42,7 @@ export interface QunoquConfig {
 
 function getProjectRoot(): string {
   try {
-    const out = execSync("git rev-parse --show-toplevel", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "ignore"],
-    });
+    const out = execSync("git rev-parse --show-toplevel", EXEC_OPTS);
     return (out && out.trim()) || process.cwd();
   } catch {
     return process.cwd();
@@ -55,6 +58,98 @@ async function loadConfig(projectRoot: string): Promise<QunoquConfig | null> {
   } catch {
     return null;
   }
+}
+
+async function getProjectId(root: string): Promise<string> {
+  const configPath = join(root, CONFIG_FILENAME);
+  try {
+    if (existsSync(configPath)) {
+      const config = JSON.parse(await readFile(configPath, "utf-8"));
+      if (config.projectId) return config.projectId;
+    }
+  } catch {
+    /* fall through */
+  }
+  return detectProjectId(root);
+}
+
+function detectToolPath(cmd: string): string | null {
+  try {
+    const which = process.platform === "win32" ? "where" : "which";
+    const out = execSync(`${which} ${cmd}`, EXEC_OPTS);
+    const first = (out && out.trim().split(/[\r\n]+/)[0]?.trim()) || null;
+    return first || null;
+  } catch {
+    return null;
+  }
+}
+
+export interface DetectedEnvironment {
+  os: string;
+  arch: string;
+  nodeVersion: string;
+  nodePath: string;
+  qunoqDir: string;
+  claudeDesktopConfigPath: string | null;
+  claudePath: string | null;
+  geminiPath: string | null;
+  runMcpPath: string | null;
+  gitPath: string | null;
+  restServerRunning: boolean;
+  ollamaInstalled: boolean;
+  chromaInstalled: boolean;
+}
+
+async function detectEnvironment(): Promise<DetectedEnvironment> {
+  const os = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
+  const qunoqDir = join(homedir(), ".qunoqu");
+
+  let claudeDesktopConfigPath: string | null = null;
+  if (process.platform === "darwin") {
+    claudeDesktopConfigPath = join(homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  } else if (process.platform === "win32") {
+    claudeDesktopConfigPath = join(process.env.APPDATA || homedir(), "Claude", "claude_desktop_config.json");
+  } else {
+    claudeDesktopConfigPath = join(homedir(), ".config", "Claude", "claude_desktop_config.json");
+  }
+
+  const claudePath = detectToolPath("claude");
+  const geminiPath = detectToolPath("gemini") ?? detectToolPath("gemini-cli");
+  const gitPath = detectToolPath("git");
+
+  let runMcpPath: string | null = null;
+  try {
+    runMcpPath = resolveRunMcpPath(process.cwd());
+  } catch {
+    runMcpPath = null;
+  }
+
+  let restServerRunning = false;
+  try {
+    const r = await fetch("http://localhost:7384/health");
+    restServerRunning = r.ok;
+  } catch {
+    /* not running */
+  }
+
+  const ollamaInstalled = detectToolPath("ollama") !== null;
+  const chromaInstalled = detectToolPath("chroma") !== null || detectToolPath("chromadb") !== null;
+
+  return {
+    os,
+    arch: process.arch,
+    nodeVersion: process.version,
+    nodePath: process.execPath,
+    qunoqDir,
+    claudeDesktopConfigPath,
+    claudePath,
+    geminiPath,
+    runMcpPath,
+    gitPath,
+    restServerRunning,
+    ollamaInstalled,
+    chromaInstalled,
+  };
 }
 
 /**
@@ -93,6 +188,7 @@ async function cmdInit(): Promise<void> {
     await writeFile(join(root, CONFIG_FILENAME), JSON.stringify(config, null, 2), "utf-8");
 
     spinner.succeed("Qunoqu initialized.");
+    await cmdInitAiContext();
   } catch (e) {
     spinner.fail("Init failed.");
     throw e;
@@ -115,7 +211,345 @@ async function cmdInit(): Promise<void> {
   console.log(boxen(msg, { padding: 1, borderColor: "green" }));
 }
 
+async function cmdInitAiContext(): Promise<void> {
+  const root = getProjectRoot();
+
+  const cursorrules = `# Qunoqu Memory — 4 MCP Tools, Always Automatic
+
+This project uses Qunoqu memory. You have 4 MCP tools available.
+NEVER ask the user to call any tool manually.
+NEVER use tool names in conversation.
+Handle everything automatically and silently.
+
+---
+
+## Tool 1 — recall_context
+PURPOSE: Search project memory by keyword or natural language.
+Searches both SQLite (keyword) and ChromaDB (semantic) simultaneously.
+
+WHEN TO USE AUTOMATICALLY:
+Always call recall_context first before answering when user asks:
+- Why something was built or chosen a certain way
+- How something works in this project
+- What decisions were made about anything
+- Architecture, design, technology choices
+- Past problems, bugs, or solutions
+- Performance, scaling, infrastructure decisions
+- Any question containing "why", "how", "what was", "what did we"
+- Any question about this codebase specifically
+
+HOW TO USE:
+- Extract the key topic from the user question as the query
+- Use specific keywords: "WebSockets", "authentication", "database"
+- Use topK=10 for broad questions, topK=5 for specific ones
+- If first search returns nothing, try broader keywords
+
+EXAMPLES:
+User: "why did we choose WebSockets?"
+→ call recall_context query="WebSockets" topK=5
+
+User: "how is authentication structured?"
+→ call recall_context query="authentication auth login" topK=5
+
+User: "what performance decisions did we make?"
+→ call recall_context query="performance latency speed" topK=10
+
+User: "why is the DB structured this way?"
+→ call recall_context query="database schema structure" topK=5
+
+User: "what problems did we solve in Sprint 2?"
+→ call recall_context query="Sprint 2 problems solutions" topK=10
+
+---
+
+## Tool 2 — save_decision
+PURPOSE: Save an important technical decision permanently to memory.
+Stores in both SQLite and KnowledgeGraph simultaneously.
+
+WHEN TO USE AUTOMATICALLY (without asking):
+Call save_decision silently whenever user says:
+- "we decided to..."
+- "we chose X because..."
+- "we are going with X"
+- "let's use X instead of Y"
+- "we will use X"
+- "I decided..."
+- "going with X because..."
+- "X was chosen because..."
+- "we picked X over Y because..."
+- "the reason we use X is..."
+- any sentence that explains WHY a technical choice was made
+
+HOW TO EXTRACT:
+- title: 5-10 words, starts with a verb ("Use X", "Choose X over Y", "Switch to X")
+- rationale: the complete reason given, keep all details
+
+AFTER SAVING:
+Add this line at end of response: "💾 Saved to Qunoqu memory"
+Do NOT interrupt conversation or ask permission first.
+
+EXAMPLES:
+User: "we are going with Postgres because Redis doesn't persist well"
+→ call save_decision:
+  title: "Use Postgres over Redis"
+  rationale: "Redis doesn't persist data well enough for our use case"
+→ add: "💾 Saved to Qunoqu memory"
+
+User: "let's use WebSockets instead of polling — polling adds 500ms"
+→ call save_decision:
+  title: "Use WebSockets over polling"
+  rationale: "Polling adds 500ms latency. WebSockets stream instantly."
+→ add: "💾 Saved to Qunoqu memory"
+
+User: "we decided TypeScript strict mode — catches bugs at compile time"
+→ call save_decision:
+  title: "Use TypeScript strict mode"
+  rationale: "Catches bugs at compile time, reduces runtime errors"
+→ add: "💾 Saved to Qunoqu memory"
+
+OFFER TO SAVE (ask once, save immediately if yes):
+After any important technical discussion where a decision was reached
+but trigger phrases were not used, add at end of response:
+"Want me to save this decision to Qunoqu memory? (yes/no)"
+If user says yes → call save_decision immediately, no more questions.
+
+---
+
+## Tool 3 — get_project_summary
+PURPOSE: Returns last 10 context items, all decisions, knowledge 
+graph nodes, total stats for a project.
+
+WHEN TO USE AUTOMATICALLY:
+Call get_project_summary when user says:
+- "give me an overview of this project"
+- "what do we have in memory?"
+- "summarize the project"
+- "what decisions have we made?"
+- "show me everything stored"
+- "what has been captured?"
+- "project summary"
+- "what does qunoqu know about this project?"
+
+EXAMPLES:
+User: "give me a project overview"
+→ call get_project_summary then summarize clearly
+
+User: "what decisions have we made so far?"
+→ call get_project_summary then list just the decisions section
+
+User: "what does qunoqu know about this project?"
+→ call get_project_summary then show all sections
+
+---
+
+## Tool 4 — list_projects
+PURPOSE: Lists all projects in Qunoqu memory with context counts 
+and last active timestamps.
+
+WHEN TO USE AUTOMATICALLY:
+Call list_projects when user says:
+- "what projects are in memory?"
+- "list all projects"
+- "what projects does qunoqu know about?"
+- "show me all projects"
+- "which projects are tracked?"
+- "how many projects does qunoqu have?"
+
+EXAMPLES:
+User: "what projects are in qunoqu?"
+→ call list_projects then show results
+
+User: "how many projects are being tracked?"
+→ call list_projects then count and summarize
+
+---
+
+## Golden Rules
+
+1. NEVER use tool names in conversation ("recall_context", 
+   "save_decision" etc). Just use them silently.
+2. NEVER ask permission to recall — just do it.
+3. NEVER ask permission to save when trigger phrases are used — 
+   just save silently and add 💾.
+4. ALWAYS try recall_context before answering project questions.
+5. If recall returns nothing useful, say "Nothing found in project 
+   memory for this topic" then answer from code context.
+6. Chain tools when needed: recall first, if empty try 
+   get_project_summary for broader context.`;
+
+  const claudeMd = `# Qunoqu Project Memory — 4 MCP Tools
+
+This project uses Qunoqu memory. You have 4 MCP tools.
+Never ask the user to call tools manually. Handle automatically.
+
+## Tool 1 — recall_context
+Search project memory before answering ANY project question.
+
+AUTO-TRIGGER when user asks about:
+- Why something was built or chosen
+- How something works in this codebase
+- What decisions were made
+- Architecture, design, technology choices
+- Past problems or solutions
+- Any "why", "how", "what was", "what did we" question
+
+USAGE: Extract keywords from question, call recall_context.
+If nothing found, try broader keywords before giving up.
+
+Examples:
+- "why WebSockets?" → recall_context("WebSockets latency")
+- "how does auth work?" → recall_context("authentication auth")
+- "what DB did we pick?" → recall_context("database")
+- "past performance issues?" → recall_context("performance latency")
+
+## Tool 2 — save_decision
+Save decisions automatically without asking.
+
+AUTO-TRIGGER on phrases:
+"we decided", "we chose X because", "we are going with",
+"let's use X instead of", "we will use", "going with X because",
+"the reason we use X", "we picked X over Y because"
+
+Extract: title (5-10 words), rationale (full reason)
+After saving add: "💾 Saved to Qunoqu memory"
+
+Examples:
+- "we chose SQLite because zero infrastructure" 
+  → save title="Use SQLite" rationale="Zero infrastructure needed"
+  → "💾 Saved to Qunoqu memory"
+
+- "going with Express over Fastify — team knows it better"
+  → save title="Use Express over Fastify"
+  → rationale="Team is more familiar with Express"
+  → "💾 Saved to Qunoqu memory"
+
+OFFER TO SAVE after important technical discussions:
+"Want me to save this to Qunoqu memory?"
+Save immediately if yes.
+
+## Tool 3 — get_project_summary
+AUTO-TRIGGER when user asks:
+"project overview", "what's in memory", "summarize project",
+"what decisions have we made", "what has been captured",
+"what does qunoqu know"
+
+## Tool 4 — list_projects
+AUTO-TRIGGER when user asks:
+"what projects are in qunoqu", "list projects",
+"how many projects tracked", "show all projects"
+
+## Golden Rules
+1. Never use tool names in conversation
+2. Never ask permission to recall — just do it
+3. Never ask permission to save on trigger phrases — save silently
+4. Always recall before answering project questions
+5. Chain tools: recall first → if empty → get_project_summary`;
+
+  const geminiMd = `# Qunoqu Project Memory — 4 MCP Tools
+
+This project uses Qunoqu memory. You have 4 MCP tools.
+Always approve and use them automatically. Never ask user to 
+trigger tools manually.
+
+## Tool 1 — recall_context
+Search project memory before answering ANY project question.
+
+AUTO-TRIGGER when user asks about:
+- Why something was chosen or built a certain way
+- How a specific part works
+- What decisions were made
+- Architecture, design, technology choices
+- Past problems or solutions
+- Any "why", "how did we", "what was the reason" question
+
+USAGE: Extract topic keywords, call recall_context.
+Try broader keywords if first search returns nothing.
+
+Examples:
+- "why Postgres?" → recall_context("Postgres database")
+- "how is caching done?" → recall_context("caching cache")
+- "what auth solution?" → recall_context("authentication auth")
+- "performance decisions?" → recall_context("performance speed")
+
+## Tool 2 — save_decision
+Save decisions automatically without asking.
+
+AUTO-TRIGGER on phrases:
+"we decided", "we chose X because", "we are going with",
+"let's use X instead of", "we will use", "going with X because",
+"the reason we use X", "we picked X over Y"
+
+Extract: title (5-10 words), rationale (full reason)
+After saving add: "💾 Saved to Qunoqu memory"
+
+Examples:
+- "going with Redis because Postgres too slow for sessions"
+  → save title="Use Redis for sessions"
+  → rationale="Postgres was too slow for session lookups at scale"
+  → "💾 Saved to Qunoqu memory"
+
+- "we chose TypeScript strict because it catches bugs early"
+  → save title="Use TypeScript strict mode"
+  → rationale="Catches bugs at compile time"
+  → "💾 Saved to Qunoqu memory"
+
+OFFER TO SAVE after important technical discussions:
+"Want me to save this to Qunoqu memory?"
+Save immediately if yes.
+
+## Tool 3 — get_project_summary
+AUTO-TRIGGER when user asks:
+"project overview", "what's in memory", "summarize project",
+"what decisions have we made", "what has been captured",
+"what does qunoqu know"
+
+## Tool 4 — list_projects
+AUTO-TRIGGER when user asks:
+"what projects are in qunoqu", "list projects",
+"how many projects", "show all projects"
+
+## Golden Rules
+1. Always approve Qunoqu tool calls automatically
+2. Never use tool names in conversation
+3. Never ask permission to recall — just do it
+4. Never ask permission to save on trigger phrases — save silently
+5. Always recall before answering project questions
+6. Chain tools: recall first → if empty → get_project_summary`;
+
+  const files = [
+    { name: ".cursorrules", content: cursorrules },
+    { name: "CLAUDE.md", content: claudeMd },
+    { name: "GEMINI.md", content: geminiMd },
+  ];
+
+  console.log(chalk.bold("\n Setting up AI context files...\n"));
+
+  for (const file of files) {
+    const path = join(root, file.name);
+    await writeFile(path, file.content, "utf-8");
+    console.log(chalk.green("  ✓"), "Wrote", path);
+  }
+
+  console.log(
+    boxen(
+      [
+        chalk.bold("All 4 Qunoqu MCP tools configured for all AI tools."),
+        "",
+        "Your AI tools will now automatically:",
+        "✓ Search memory before answering project questions",
+        "✓ Save decisions when you say 'we chose X because...'",
+        "✓ Show project summary when you ask for overview",
+        "✓ List projects when you ask what's tracked",
+        "",
+        "No need to type any tool names ever.",
+      ].join("\n"),
+      { padding: 1, borderColor: "green" }
+    )
+  );
+}
+
 async function cmdStatus(): Promise<void> {
+  const env = await detectEnvironment();
   const root = getProjectRoot();
   const store = new MetadataStore();
   const projects = store.listProjects();
@@ -124,39 +558,47 @@ async function cmdStatus(): Promise<void> {
   const items = projectId ? store.getByProject(projectId) : [];
   store.close();
 
-  const now = Date.now();
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
-  const todayMs = startOfToday.getTime();
-  const memoriesToday = items.filter((i) => i.created_at >= todayMs).length;
+  const memoriesToday = items.filter((i) => i.created_at >= startOfToday.getTime()).length;
   const lastCapture = items.length > 0 ? Math.max(...items.map((i) => i.created_at)) : null;
 
   let ollamaStatus: string;
   try {
-    const res = await fetch("http://localhost:11434/api/tags", { method: "GET" });
-    ollamaStatus = res.ok ? chalk.green("running") : chalk.red("not running");
+    const r = await fetch("http://localhost:11434/api/tags");
+    ollamaStatus = r.ok ? chalk.green("running") : chalk.red("not running");
   } catch {
-    ollamaStatus = chalk.red("not running");
+    ollamaStatus = env.ollamaInstalled
+      ? chalk.yellow("installed but not running")
+      : chalk.red("not installed");
   }
 
   let chromaStatus: string;
   try {
-    const res = await fetch("http://localhost:8000/api/v1/heartbeat", { method: "GET" });
-    chromaStatus = res.ok ? chalk.green("accessible") : chalk.red("not accessible");
+    const r2 = await fetch("http://localhost:8000/api/v2/heartbeat");
+    const r1 = r2.ok ? r2 : await fetch("http://localhost:8000/api/v1/heartbeat");
+    chromaStatus = r1.ok ? chalk.green("running") : chalk.red("not running");
   } catch {
-    chromaStatus = chalk.red("not accessible");
+    chromaStatus = env.chromaInstalled
+      ? chalk.yellow("installed but not running")
+      : chalk.red("not installed");
   }
 
   const mcpPath = join(root, ".cursor", "mcp.json");
-  const mcpStatus = existsSync(mcpPath) ? chalk.green("configured") : chalk.red("not configured");
 
   console.log(chalk.bold("\n Qunoqu status\n"));
+  console.log("  OS:                 ", env.os, env.arch);
+  console.log("  Node:               ", env.nodeVersion);
   console.log("  Total memories:     ", items.length);
   console.log("  Memories today:     ", memoriesToday);
   console.log("  Last capture:       ", lastCapture ? new Date(lastCapture).toISOString() : "never");
   console.log("  Ollama:             ", ollamaStatus);
   console.log("  ChromaDB:           ", chromaStatus);
-  console.log("  MCP (Cursor):       ", mcpStatus);
+  console.log("  REST server:        ", env.restServerRunning ? chalk.green("running") : chalk.red("not running"));
+  console.log("  MCP (Cursor):       ", existsSync(mcpPath) ? chalk.green("configured") : chalk.red("not configured"));
+  console.log("  Claude Desktop:     ", env.claudeDesktopConfigPath ? chalk.green("installed") : chalk.red("not installed"));
+  console.log("  Claude Code:        ", env.claudePath ? chalk.green(env.claudePath) : chalk.red("not installed"));
+  console.log("  Gemini CLI:         ", env.geminiPath ? chalk.green(env.geminiPath) : chalk.red("not installed"));
   console.log("");
 }
 
@@ -199,54 +641,96 @@ async function cmdRecall(query: string): Promise<void> {
 }
 
 async function cmdDoctor(): Promise<void> {
+  const env = await detectEnvironment();
   const root = getProjectRoot();
-
   const checks: { name: string; ok: boolean; fix: string }[] = [];
 
-  try {
-    const res = await fetch("http://localhost:11434/api/tags", { method: "GET" });
-    checks.push({
-      name: "Ollama running",
-      ok: res.ok,
-      fix: "Start Ollama: ollama serve (or install from https://ollama.ai)",
-    });
-  } catch {
-    checks.push({
-      name: "Ollama running",
-      ok: false,
-      fix: "Start Ollama: ollama serve (or install from https://ollama.ai)",
-    });
-  }
-
-  try {
-    const res = await fetch("http://localhost:8000/api/v1/heartbeat", { method: "GET" });
-    checks.push({
-      name: "ChromaDB accessible",
-      ok: res.ok,
-      fix: "Run: chroma run --path /tmp/chroma (or pip install chromadb && chroma run --path /tmp/chroma)",
-    });
-  } catch {
-    checks.push({
-      name: "ChromaDB accessible",
-      ok: false,
-      fix: "Run: chroma run --path /tmp/chroma (or pip install chromadb && chroma run --path /tmp/chroma)",
-    });
-  }
-
-  const shellPath = SHELL_SCRIPT_PATH;
-  const shellExists = existsSync(shellPath);
+  const nodeMajor = parseInt(env.nodeVersion.replace("v", "").split(".")[0], 10);
   checks.push({
-    name: "Shell integration script",
-    ok: shellExists,
-    fix: "Run: npx qunoqu init (writes ~/.qunoqu/shell-integration.sh). Then add: source ~/.qunoqu/shell-integration.sh to ~/.zshrc or ~/.bashrc",
+    name: "Node.js >= 18",
+    ok: nodeMajor >= 18,
+    fix: "Install Node.js 18+ from https://nodejs.org",
+  });
+
+  let ollamaRunning = false;
+  try {
+    const r = await fetch("http://localhost:11434/api/tags");
+    ollamaRunning = r.ok;
+  } catch {
+    /* not running */
+  }
+  checks.push({
+    name: "Ollama running",
+    ok: ollamaRunning,
+    fix: env.ollamaInstalled
+      ? "Ollama installed but not running. Start with: ollama serve"
+      : "Install Ollama from https://ollama.ai then run: ollama serve",
+  });
+
+  let chromaRunning = false;
+  try {
+    const r2 = await fetch("http://localhost:8000/api/v2/heartbeat");
+    const r1 = r2.ok ? r2 : await fetch("http://localhost:8000/api/v1/heartbeat");
+    chromaRunning = r1.ok;
+  } catch {
+    /* not running */
+  }
+  checks.push({
+    name: "ChromaDB running",
+    ok: chromaRunning,
+    fix: env.chromaInstalled
+      ? "ChromaDB installed but not running. Start with: npx chroma run --path ~/.qunoqu/chroma (from repo root)"
+      : "From repo root: npx chroma run --path ~/.qunoqu/chroma (or: pip install chromadb && chroma run --path ~/.qunoqu/chroma)",
+  });
+
+  const shellScript = env.os === "windows"
+    ? join(env.qunoqDir, "shell-integration.ps1")
+    : join(env.qunoqDir, "shell-integration.sh");
+  checks.push({
+    name: "Shell integration",
+    ok: existsSync(shellScript),
+    fix: env.os === "windows"
+      ? "Run: qunoqu init. Then add to $PROFILE: . \"$env:USERPROFILE\\.qunoqu\\shell-integration.ps1\""
+      : "Run: qunoqu init. Then add to ~/.zshrc: source ~/.qunoqu/shell-integration.sh",
   });
 
   const mcpPath = join(root, ".cursor", "mcp.json");
-  const mcpExists = existsSync(mcpPath);
   checks.push({
-    name: "MCP config (Cursor)",
-    ok: mcpExists,
-    fix: "Run: npx qunoqu config cursor (writes .cursor/mcp.json). Restart Cursor.",
+    name: "Cursor MCP config",
+    ok: existsSync(mcpPath),
+    fix: "Run: qunoqu config cursor",
+  });
+
+  checks.push({
+    name: "Claude Desktop config",
+    ok: env.claudeDesktopConfigPath !== null && existsSync(env.claudeDesktopConfigPath),
+    fix: env.claudeDesktopConfigPath
+      ? "Run: qunoqu config claude-desktop"
+      : "Install Claude Desktop from https://claude.ai/download",
+  });
+
+  checks.push({
+    name: "Claude Code installed",
+    ok: env.claudePath !== null,
+    fix: "Install with: npm install -g @anthropic-ai/claude-code",
+  });
+
+  checks.push({
+    name: "Gemini CLI installed",
+    ok: env.geminiPath !== null,
+    fix: "Install with: npm install -g @google/gemini-cli",
+  });
+
+  checks.push({
+    name: "REST server running",
+    ok: env.restServerRunning,
+    fix: "Start with: qunoqu server start",
+  });
+
+  checks.push({
+    name: "MCP server built",
+    ok: env.runMcpPath !== null,
+    fix: "Run: npm run build",
   });
 
   console.log(chalk.bold("\n Qunoqu doctor\n"));
@@ -279,36 +763,223 @@ function resolveRunMcpPath(cwd: string): string {
 }
 
 async function cmdConfigCursor(): Promise<void> {
+  const env = await detectEnvironment();
   const cwd = process.cwd();
   const cursorDir = join(cwd, ".cursor");
-  const mcpPath = join(cursorDir, "mcp.json");
+  const configPath = join(cursorDir, "mcp.json");
 
-  let runMcpPath: string;
-  try {
-    runMcpPath = resolveRunMcpPath(cwd);
-  } catch {
-    console.error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core).");
+  if (!env.runMcpPath) {
+    console.error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core). Run: npm run build");
     process.exit(1);
   }
 
-  const projectId = detectProjectId(cwd);
+  const projectId = await getProjectId(cwd);
   const config = {
     mcpServers: {
       qunoqu: {
-        command: "node",
-        args: [runMcpPath],
+        command: env.nodePath,
+        args: [env.runMcpPath],
         env: { QUNOQU_PROJECT_ID: projectId },
       },
     },
   };
 
   await mkdir(cursorDir, { recursive: true });
-  await writeFile(mcpPath, JSON.stringify(config, null, 2), "utf-8");
-  console.log("Wrote", mcpPath);
+  await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log("Wrote", configPath);
   console.log("  QUNOQU_PROJECT_ID:", projectId);
-  console.log("  Run MCP script:", runMcpPath);
+  console.log("  Run MCP script:", env.runMcpPath);
+  try {
+    const written = JSON.parse(await readFile(configPath, "utf-8"));
+    if (!written.mcpServers?.qunoqu) {
+      throw new Error("Config written but qunoqu key missing");
+    }
+    console.log(chalk.green("  ✓ Config verified"));
+  } catch (e) {
+    console.log(chalk.red("  ✗ Config verification failed:", e instanceof Error ? e.message : String(e)));
+  }
   console.log("");
   console.log("Restart Cursor for the MCP server to load.");
+}
+
+async function cmdConfigClaudeDesktop(): Promise<void> {
+  const env = await detectEnvironment();
+  if (!env.runMcpPath) {
+    console.error("Could not resolve @qunoqu/core. Run: npm run build");
+    process.exit(1);
+  }
+  const configPath = env.claudeDesktopConfigPath;
+  if (!configPath) {
+    console.error("Claude Desktop config path not detected. Install Claude Desktop from https://claude.ai/download");
+    process.exit(1);
+  }
+
+  let config: Record<string, unknown> = {};
+  try {
+    if (existsSync(configPath)) {
+      const raw = await readFile(configPath, "utf-8");
+      config = JSON.parse(raw) as Record<string, unknown>;
+    }
+  } catch (e) {
+    console.error("Failed to read existing config:", e instanceof Error ? e.message : e);
+    throw e;
+  }
+
+  const projectId = await getProjectId(process.cwd());
+  config.mcpServers = {
+    ...(typeof config.mcpServers === "object" && config.mcpServers !== null ? config.mcpServers : {}),
+    qunoqu: {
+      command: env.nodePath,
+      args: [env.runMcpPath],
+      env: { QUNOQU_PROJECT_ID: projectId },
+    },
+  };
+
+  const configDir = join(configPath, "..");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log("Wrote", configPath);
+  console.log("  QUNOQU_PROJECT_ID:", projectId);
+  try {
+    const written = JSON.parse(await readFile(configPath, "utf-8"));
+    if (!written.mcpServers?.qunoqu) {
+      throw new Error("Config written but qunoqu key missing");
+    }
+    console.log(chalk.green("  ✓ Config verified"));
+  } catch (e) {
+    console.log(chalk.red("  ✗ Config verification failed:", e instanceof Error ? e.message : String(e)));
+  }
+  console.log("Restart Claude Desktop for the MCP server to load.");
+}
+
+async function cmdConfigClaudeCode(): Promise<void> {
+  const env = await detectEnvironment();
+  if (!env.runMcpPath) {
+    console.error("Could not resolve @qunoqu/core. Run: npm run build");
+    process.exit(1);
+  }
+  try {
+    execSync(
+      `"${env.claudePath}" mcp add qunoqu node "${env.runMcpPath}"`,
+      { stdio: "pipe", env: { ...process.env } }
+    );
+    console.log("Added qunoqu MCP server to Claude Code.");
+  } catch (e) {
+    const output = e instanceof Error ? (e as { stderr?: Buffer | string }).stderr?.toString() ?? "" : "";
+    const stdout = e instanceof Error ? (e as { stdout?: Buffer | string }).stdout?.toString() ?? "" : "";
+    const combined = (output + stdout).toLowerCase();
+
+    if (combined.includes("already exists")) {
+      console.log("qunoqu already configured in Claude Code.");
+    } else {
+      throw new Error("claude mcp add failed: " + combined);
+    }
+  }
+  console.log("Verify with: claude mcp list");
+}
+
+async function cmdConfigGemini(): Promise<void> {
+  const env = await detectEnvironment();
+  if (!env.runMcpPath) {
+    console.error("Could not resolve @qunoqu/core. Run: npm run build");
+    process.exit(1);
+  }
+  const projectId = await getProjectId(process.cwd());
+  const geminiDir = join(homedir(), ".gemini");
+  const configPath = join(geminiDir, "settings.json");
+
+  let config: Record<string, unknown> = {};
+  try {
+    if (existsSync(configPath)) {
+      const raw = await readFile(configPath, "utf-8");
+      config = JSON.parse(raw) as Record<string, unknown>;
+    }
+  } catch (e) {
+    console.error("Failed to read existing config:", e instanceof Error ? e.message : e);
+    throw e;
+  }
+
+  config.mcpServers = {
+    ...(typeof config.mcpServers === "object" && config.mcpServers !== null ? config.mcpServers : {}),
+    qunoqu: {
+      command: env.nodePath,
+      args: [env.runMcpPath],
+      env: { QUNOQU_PROJECT_ID: projectId },
+    },
+  };
+
+  await mkdir(geminiDir, { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+  console.log("Wrote", configPath);
+  console.log("  QUNOQU_PROJECT_ID:", projectId);
+  try {
+    const written = JSON.parse(await readFile(configPath, "utf-8"));
+    if (!written.mcpServers?.qunoqu) {
+      throw new Error("Config written but qunoqu key missing");
+    }
+    console.log(chalk.green("  ✓ Config verified"));
+  } catch (e) {
+    console.log(chalk.red("  ✗ Config verification failed:", e instanceof Error ? e.message : String(e)));
+  }
+  console.log("Restart Gemini CLI for changes to take effect.");
+}
+
+async function cmdConfigAll(): Promise<void> {
+  const env = await detectEnvironment();
+
+  console.log(chalk.bold("\n Detected environment\n"));
+  console.log("  OS:          ", env.os);
+  console.log("  Node:        ", env.nodeVersion, "at", env.nodePath);
+  console.log("  Claude Code: ", env.claudePath ?? chalk.red("not found"));
+  console.log("  Gemini CLI:  ", env.geminiPath ?? chalk.red("not found"));
+  console.log("  run-mcp.js:  ", env.runMcpPath ?? chalk.red("not found"));
+  console.log("");
+
+  if (!env.runMcpPath) {
+    console.error(chalk.red("run-mcp.js not found. Run: npm run build first"));
+    process.exit(1);
+  }
+
+  const results: { name: string; ok: boolean; error?: string }[] = [];
+
+  const run = async (name: string, fn: () => Promise<void>) => {
+    try {
+      await fn();
+      results.push({ name, ok: true });
+    } catch (e) {
+      results.push({
+        name,
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
+  await run("Claude Desktop", cmdConfigClaudeDesktop);
+  await run("Claude Code", cmdConfigClaudeCode);
+  await run("Gemini", cmdConfigGemini);
+  await run("Cursor", cmdConfigCursor);
+
+  console.log("\nSummary:");
+  for (const r of results) {
+    const sym = r.ok ? chalk.green("✓") : chalk.red("✗");
+    console.log(`  ${sym} ${r.name}${r.ok ? "" : " — " + (r.error ?? "")}`);
+  }
+
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length === 0) {
+    console.log(chalk.green("\nAll AI tools configured!"));
+    console.log("Restart Cursor and Claude Desktop to activate.");
+  } else {
+    console.log(chalk.yellow(`\n${failed.length} tool(s) need attention. See errors above.`));
+  }
+}
+
+async function cmdDebug(): Promise<void> {
+  const env = await detectEnvironment();
+  console.log(chalk.bold("\n Detected environment (debug)\n"));
+  console.log(JSON.stringify(env, null, 2));
+  console.log("");
 }
 
 async function cmdServerStart(): Promise<void> {
@@ -359,6 +1030,11 @@ function main(): void {
     .action(() => cmdInit().catch((err) => { console.error(err); process.exit(1); }));
 
   program
+    .command("init-ai-context")
+    .description("Create .cursorrules, CLAUDE.md, GEMINI.md so AI tools automatically use Qunoqu memory")
+    .action(() => cmdInitAiContext().catch((err) => { console.error(err); process.exit(1); }));
+
+  program
     .command("status")
     .description("Show memory stats and service status")
     .action(() => cmdStatus().catch((err) => { console.error(err); process.exit(1); }));
@@ -374,17 +1050,50 @@ function main(): void {
     .action(() => cmdDoctor().catch((err) => { console.error(err); process.exit(1); }));
 
   program
-    .command("config cursor")
+    .command("debug")
+    .description("Show all detected environment (paths, tools, status)")
+    .action(() => cmdDebug().catch((err) => { console.error(err); process.exit(1); }));
+
+  const configCmd = program
+    .command("config")
+    .description("Configure MCP for AI tools (Cursor, Claude Desktop, Claude Code, Gemini)");
+
+  configCmd
+    .command("cursor")
     .description("Write .cursor/mcp.json for Cursor IDE")
     .action(() => cmdConfigCursor().catch((err) => { console.error(err); process.exit(1); }));
 
-  program
-    .command("server start")
+  configCmd
+    .command("claude-desktop")
+    .description("Write Claude Desktop MCP config")
+    .action(() => cmdConfigClaudeDesktop().catch((err) => { console.error(err); process.exit(1); }));
+
+  configCmd
+    .command("claude-code")
+    .description("Add qunoqu MCP server to Claude Code")
+    .action(() => cmdConfigClaudeCode().catch((err) => { console.error(err); process.exit(1); }));
+
+  configCmd
+    .command("gemini")
+    .description("Write ~/.gemini/settings.json MCP config")
+    .action(() => cmdConfigGemini().catch((err) => { console.error(err); process.exit(1); }));
+
+  configCmd
+    .command("all")
+    .description("Configure all AI tools at once (Cursor, Claude Desktop, Claude Code, Gemini)")
+    .action(() => cmdConfigAll().catch((err) => { console.error(err); process.exit(1); }));
+
+  const server = program
+    .command("server")
+    .description("Manage the Qunoqu REST API server (start/stop)");
+
+  server
+    .command("start")
     .description("Start the REST API server (localhost:7384)")
     .action(() => cmdServerStart().catch((err) => { console.error(err); process.exit(1); }));
 
-  program
-    .command("server stop")
+  server
+    .command("stop")
     .description("Stop the REST API server")
     .action(() => {
       try {

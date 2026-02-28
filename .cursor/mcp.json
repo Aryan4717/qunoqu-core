@@ -1,12 +1,12 @@
 {
   "mcpServers": {
     "qunoqu": {
-      "command": "node",
+      "command": "/opt/homebrew/Cellar/node/25.6.1_1/bin/node",
       "args": [
         "/Users/aryan/Desktop/qunoqu-core/packages/core/dist/run-mcp.js"
       ],
       "env": {
-        "QUNOQU_PROJECT_ID": "5193ac5a-1d9e-8878-c6d1-b1f95c0313dd"
+        "QUNOQU_PROJECT_ID": "2b05ac4d-0e3f-4f0b-b816-043ce2ed0fed"
       }
     }
   }
