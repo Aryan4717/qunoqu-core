@@ -17,15 +17,17 @@ import {
 } from "@qunoqu/core";
 import { mkdir, writeFile, readFile } from "fs/promises";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, basename } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 
 const QUNOQU_DIR = join(homedir(), ".qunoqu");
 const SHELL_SCRIPT_PATH = join(QUNOQU_DIR, "shell-integration.sh");
 const CONFIG_FILENAME = ".qunoqu-config.json";
+const DAEMON_PID_PATH = join(QUNOQU_DIR, "daemon.pid");
+const DAEMON_LOG_PATH = join(QUNOQU_DIR, "daemon.log");
 const CLI_VERSION = "0.0.0";
 
 const EXEC_OPTS: { encoding: "utf-8"; env: NodeJS.ProcessEnv; stdio: ("pipe" | "ignore")[] } = {
@@ -71,6 +73,19 @@ async function getProjectId(root: string): Promise<string> {
     /* fall through */
   }
   return detectProjectId(root);
+}
+
+function getDaemonPid(): number | null {
+  if (!existsSync(DAEMON_PID_PATH)) return null;
+  try {
+    const raw = readFileSync(DAEMON_PID_PATH, "utf-8").trim();
+    const pid = parseInt(raw, 10);
+    if (Number.isNaN(pid)) return null;
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return null;
+  }
 }
 
 function detectToolPath(cmd: string): string | null {
@@ -206,6 +221,8 @@ async function cmdInit(): Promise<void> {
     chalk.cyan("   npx qunoqu config cursor"),
     "",
     "4. Use the VS Code extension or MCP to capture and recall memories.",
+    "",
+    chalk.green("Run 'qunoqu daemon start' to begin capturing automatically."),
   ].join("\n");
 
   console.log(boxen(msg, { padding: 1, borderColor: "green" }));
@@ -762,6 +779,25 @@ function resolveRunMcpPath(cwd: string): string {
   throw new Error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core).");
 }
 
+/** Resolve path to @qunoqu/core dist/run-daemon.js (same pattern as run-mcp). */
+function resolveRunDaemonPath(cwd: string): string {
+  const cliDir = dirname(fileURLToPath(import.meta.url));
+  const siblingCoreRunDaemon = join(cliDir, "..", "..", "core", "dist", "run-daemon.js");
+  if (existsSync(siblingCoreRunDaemon)) return siblingCoreRunDaemon;
+
+  const require = createRequire(import.meta.url);
+  const searchPaths = [cwd, join(cliDir, "..", "..", ".."), join(cliDir, "..")];
+  for (const p of searchPaths) {
+    try {
+      const corePkgPath = require.resolve("@qunoqu/core/package.json", { paths: [p] });
+      return join(dirname(corePkgPath), "dist", "run-daemon.js");
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("Could not resolve @qunoqu/core. Run from a project that has @qunoqu/core installed (e.g. npm install @qunoqu/core).");
+}
+
 async function cmdConfigCursor(): Promise<void> {
   const env = await detectEnvironment();
   const cwd = process.cwd();
@@ -1018,6 +1054,149 @@ function cmdServerStop(): void {
   }
 }
 
+async function cmdDaemonStart(): Promise<void> {
+  const pid = getDaemonPid();
+  if (pid !== null) {
+    console.log(`Daemon already running (PID: ${pid})`);
+    return;
+  }
+  const projectRoot = getProjectRoot();
+  const projectId = await getProjectId(projectRoot);
+  let runDaemonPath: string;
+  try {
+    runDaemonPath = resolveRunDaemonPath(process.cwd());
+  } catch (e) {
+    console.error(chalk.red(e instanceof Error ? e.message : String(e)));
+    process.exit(1);
+  }
+  const nodePath = process.execPath;
+  spawn(nodePath, [runDaemonPath], {
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      QUNOQU_PROJECT_ROOT: projectRoot,
+      QUNOQU_PROJECT_ID: projectId,
+    },
+  }).unref();
+  await new Promise((r) => setTimeout(r, 1000));
+  const newPid = getDaemonPid();
+  if (newPid === null) {
+    console.error(chalk.red("Daemon may have failed to start. Check logs: ") + DAEMON_LOG_PATH);
+    process.exit(1);
+  }
+  console.log(chalk.green("Qunoqu daemon started (PID: " + newPid + ")"));
+  console.log("  Watching:", projectRoot);
+  console.log("  REST server: http://localhost:7384");
+  console.log("  Logs:", DAEMON_LOG_PATH);
+}
+
+async function cmdDaemonStop(): Promise<void> {
+  const pid = getDaemonPid();
+  if (pid === null) {
+    console.log("Daemon is not running");
+    return;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    console.log("Daemon is not running");
+    return;
+  }
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (getDaemonPid() === null) {
+      console.log(chalk.green("Daemon stopped"));
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // ignore
+  }
+  console.log(chalk.green("Daemon stopped"));
+}
+
+async function cmdDaemonStatus(): Promise<void> {
+  const pid = getDaemonPid();
+  if (pid === null) {
+    console.log("Daemon is not running");
+    console.log("Run: qunoqu daemon start");
+    return;
+  }
+  const projectRoot = getProjectRoot();
+  const projectId = await getProjectId(projectRoot);
+  const store = new MetadataStore();
+  const projects = store.listProjects();
+  const project = projects.find((p) => p.id === projectId || p.root_path === projectRoot);
+  const projectName = project?.name ?? basename(projectRoot);
+  const items = store.getByProject(projectId);
+  store.close();
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const capturedToday = items.filter((i) => i.created_at >= startOfToday.getTime()).length;
+  let restStatus = "not running";
+  try {
+    const r = await fetch("http://localhost:7384/health");
+    restStatus = r.ok ? "running" : "not running";
+  } catch {
+    // ignore
+  }
+  const pidPath = DAEMON_PID_PATH;
+  let startedAt: number | null = null;
+  if (existsSync(pidPath)) {
+    try {
+      const raw = readFileSync(pidPath, "utf-8");
+      const n = parseInt(raw.trim(), 10);
+      if (!Number.isNaN(n) && n === pid) {
+        startedAt = Date.now(); // we don't persist startedAt in pid file; show "running"
+      }
+    } catch {
+      // ignore
+    }
+  }
+  console.log(chalk.bold("Daemon running (PID: " + pid + ")"));
+  console.log("  Project:", projectName);
+  console.log("  Watching:", projectRoot);
+  console.log("  REST server:", restStatus);
+  console.log("  Total captured:", items.length, "items");
+  console.log("  Captured today:", capturedToday, "items");
+  console.log("  Started: running");
+  console.log("  Logs:", DAEMON_LOG_PATH);
+}
+
+function cmdDaemonLogs(): void {
+  if (!existsSync(DAEMON_LOG_PATH)) {
+    console.log("No logs yet. Start daemon first.");
+    return;
+  }
+  const content = readFileSync(DAEMON_LOG_PATH, "utf-8");
+  const lines = content.trim().split("\n");
+  const last = lines.slice(-30);
+  for (const line of last) {
+    const tab = line.indexOf("\t");
+    const ts = tab >= 0 ? line.slice(0, tab) : "";
+    const rest = tab >= 0 ? line.slice(tab + 1) : line;
+    if (rest.startsWith("Stored:")) {
+      console.log(chalk.gray(ts) + "\t" + chalk.green(rest));
+    } else if (rest.startsWith("Filtered:")) {
+      console.log(chalk.gray(ts) + "\t" + chalk.yellow(rest));
+    } else if (rest.includes("ERROR")) {
+      console.log(chalk.gray(ts) + "\t" + chalk.red(rest));
+    } else {
+      console.log(chalk.gray(ts) + "\t" + rest);
+    }
+  }
+}
+
+async function cmdDaemonRestart(): Promise<void> {
+  await cmdDaemonStop();
+  await new Promise((r) => setTimeout(r, 500));
+  await cmdDaemonStart();
+}
+
 function main(): void {
   program
     .name("qunoqu")
@@ -1103,6 +1282,42 @@ function main(): void {
         process.exit(1);
       }
     });
+
+  const daemonCmd = program
+    .command("daemon")
+    .description("Manage the Qunoqu background daemon");
+
+  daemonCmd
+    .command("start")
+    .description("Start background capture daemon")
+    .action(() => cmdDaemonStart().catch((err) => { console.error(err); process.exit(1); }));
+
+  daemonCmd
+    .command("stop")
+    .description("Stop background capture daemon")
+    .action(() => cmdDaemonStop().catch((err) => { console.error(err); process.exit(1); }));
+
+  daemonCmd
+    .command("status")
+    .description("Show daemon status and capture stats")
+    .action(() => cmdDaemonStatus().catch((err) => { console.error(err); process.exit(1); }));
+
+  daemonCmd
+    .command("logs")
+    .description("Show recent capture logs")
+    .action(() => {
+      try {
+        cmdDaemonLogs();
+      } catch (err) {
+        console.error(err);
+        process.exit(1);
+      }
+    });
+
+  daemonCmd
+    .command("restart")
+    .description("Restart the daemon")
+    .action(() => cmdDaemonRestart().catch((err) => { console.error(err); process.exit(1); }));
 
   program.parse(process.argv);
 

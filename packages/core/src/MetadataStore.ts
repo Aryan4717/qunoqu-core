@@ -110,6 +110,22 @@ export class MetadataStore {
     return id;
   }
 
+  /** Ensure a project exists by id; insert if missing. Updates last_active. Returns id. */
+  ensureProject(projectId: string, name: string, root_path: string): string {
+    const t = now();
+    const existing = this.db.prepare("SELECT id FROM projects WHERE id = ?").get(projectId) as { id: string } | undefined;
+    if (existing) {
+      this.db.prepare("UPDATE projects SET last_active = ? WHERE id = ?").run(t, projectId);
+      return projectId;
+    }
+    this.db
+      .prepare(
+        "INSERT INTO projects (id, name, root_path, created_at, last_active) VALUES (?, ?, ?, ?, ?)"
+      )
+      .run(projectId, name, root_path, t, t);
+    return projectId;
+  }
+
   /** Insert a context item. Returns id. */
   insertContextItem(input: InsertContextItemInput): string {
     const id = randomId();

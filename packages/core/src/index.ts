@@ -56,3 +56,5 @@ export {
   DEFAULT_API_PID_PATH,
 } from "./server.js";
 export type { ServerOptions, CreateAppOptions, ContextItemApi } from "./server.js";
+export { QunoqDaemon } from "./QunoqDaemon.js";
+export type { DaemonOptions, DaemonStatus } from "./QunoqDaemon.js";
