@@ -16,8 +16,10 @@ export const CONTEXT_CAPTURED_EVENT = "context-captured";
 export interface FileWatcherOptions {
   /** Project identifier for emitted context items */
   projectId?: string;
-  /** Glob patterns to ignore (default: node_modules, .git, dist, build) */
+  /** Glob patterns to ignore (default: node_modules, .git, dist, build). Or use ignoreFn to skip paths entirely and avoid EMFILE. */
   ignore?: string[];
+  /** If true, use a function-based ignore so node_modules/.git/dist/build are never traversed (recommended for daemon). */
+  useIgnoreFn?: boolean;
 }
 
 export interface FileWatcherEvents {
@@ -30,6 +32,7 @@ export class FileWatcher extends EventEmitter {
   private projectDir: string;
   private projectId: string;
   private ignore: string[];
+  private useIgnoreFn: boolean;
 
   constructor(
     projectDirOrOptions?: string | FileWatcherOptions,
@@ -43,6 +46,22 @@ export class FileWatcher extends EventEmitter {
     this.projectDir = typeof projectDirOrOptions === "string" ? projectDirOrOptions : "";
     this.projectId = options.projectId ?? "default";
     this.ignore = options.ignore ?? [...DEFAULT_IGNORE_PATTERNS];
+    this.useIgnoreFn = options.useIgnoreFn ?? false;
+  }
+
+  /** Returns true if path should be ignored (never traverse). Prevents EMFILE from node_modules. */
+  private static ignoredFn(path: string): boolean {
+    const n = path.replace(/\\/g, "/");
+    return (
+      n.includes("/node_modules/") ||
+      n.startsWith("node_modules") ||
+      n.includes("/.git/") ||
+      n.startsWith(".git") ||
+      n.includes("/dist/") ||
+      n.startsWith("dist/") ||
+      n.includes("/build/") ||
+      n.startsWith("build/")
+    );
   }
 
   /**
@@ -56,10 +75,11 @@ export class FileWatcher extends EventEmitter {
       this.watcher = null;
     }
 
+    const ignored = this.useIgnoreFn ? FileWatcher.ignoredFn : this.ignore;
     this.watcher = chokidar.watch(dir, {
       persistent: true,
       ignoreInitial: false,
-      ignored: this.ignore,
+      ignored,
       awaitWriteFinish: { stabilityThreshold: 100 },
     });
 

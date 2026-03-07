@@ -4,10 +4,17 @@
  * Reads projectRoot and projectId from env or .qunoqu-config.json.
  */
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import { QunoqDaemon } from "./QunoqDaemon.js";
 import { detectProjectId } from "./ProjectDetector.js";
+
+const QUNOQU_DIR = join(homedir(), ".qunoqu");
+
+// Write PID immediately so CLI can confirm daemon started after spawn
+mkdirSync(QUNOQU_DIR, { recursive: true });
+writeFileSync(join(QUNOQU_DIR, "daemon.pid"), String(process.pid));
 
 function getProjectRoot(): string {
   return process.env.QUNOQU_PROJECT_ROOT || process.cwd();
@@ -30,6 +37,8 @@ function getProjectId(projectRoot: string): string | null {
   }
 }
 
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
 async function main(): Promise<void> {
   const projectRoot = getProjectRoot();
   let projectId = getProjectId(projectRoot);
@@ -47,6 +56,10 @@ async function main(): Promise<void> {
   });
 
   const shutdown = async (): Promise<void> => {
+    if (heartbeatInterval !== null) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
     await daemon.stop();
     process.exit(0);
   };
@@ -61,6 +74,9 @@ async function main(): Promise<void> {
     console.error("qunoqu daemon uncaughtException:", err);
     daemon.stop().finally(() => process.exit(1));
   });
+
+  // Keep event loop alive so process stays running
+  heartbeatInterval = setInterval(() => {}, 10000);
 
   await daemon.start();
 }

@@ -166,6 +166,7 @@ export class QunoqDaemon {
     await this.syncChromaFromSQLite();
     this.fileWatcher = new FileWatcher(this.projectRoot, {
       projectId: this.projectId,
+      useIgnoreFn: true,
     });
     this.fileWatcher.on(CONTEXT_CAPTURED_EVENT, (items: ContextItem[]) => {
       for (const item of items) {
@@ -209,12 +210,7 @@ export class QunoqDaemon {
       graphPath: join(QUNOQU_DIR, "graph.json"),
     });
     this.restServer = server;
-    const pidDir = dirname(this.pidPath);
-    if (!existsSync(pidDir)) {
-      mkdirSync(pidDir, { recursive: true });
-    }
     this.startedAt = Date.now();
-    appendFileSync(this.pidPath, String(process.pid), "utf-8");
     this.log(`Daemon started (PID: ${process.pid}), REST on port ${port}`);
   }
 

@@ -16,7 +16,7 @@ import {
   DEFAULT_API_PID_PATH,
 } from "@qunoqu/core";
 import { mkdir, writeFile, readFile } from "fs/promises";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { join, dirname, basename } from "path";
 import { homedir } from "os";
 import { createRequire } from "module";
@@ -1069,26 +1069,37 @@ async function cmdDaemonStart(): Promise<void> {
     console.error(chalk.red(e instanceof Error ? e.message : String(e)));
     process.exit(1);
   }
-  const nodePath = process.execPath;
-  spawn(nodePath, [runDaemonPath], {
+  const env = await detectEnvironment();
+  await mkdir(QUNOQU_DIR, { recursive: true });
+  const logFd = openSync(DAEMON_LOG_PATH, "a");
+  const child = spawn(env.nodePath, [runDaemonPath], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
       QUNOQU_PROJECT_ROOT: projectRoot,
       QUNOQU_PROJECT_ID: projectId,
     },
-  }).unref();
-  await new Promise((r) => setTimeout(r, 1000));
+  });
+  child.unref();
+  await new Promise((r) => setTimeout(r, 2000));
   const newPid = getDaemonPid();
-  if (newPid === null) {
-    console.error(chalk.red("Daemon may have failed to start. Check logs: ") + DAEMON_LOG_PATH);
-    process.exit(1);
+  if (newPid !== null) {
+    console.log(chalk.green("Qunoqu daemon started (PID: " + newPid + ")"));
+    console.log("  Watching:", projectRoot);
+    console.log("  REST server: http://localhost:7384");
+    console.log("  Logs:", DAEMON_LOG_PATH);
+    return;
   }
-  console.log(chalk.green("Qunoqu daemon started (PID: " + newPid + ")"));
-  console.log("  Watching:", projectRoot);
-  console.log("  REST server: http://localhost:7384");
-  console.log("  Logs:", DAEMON_LOG_PATH);
+  console.error(chalk.red("Daemon failed to start. Check logs: ") + DAEMON_LOG_PATH);
+  if (existsSync(DAEMON_LOG_PATH)) {
+    const content = readFileSync(DAEMON_LOG_PATH, "utf-8");
+    const lines = content.trim().split("\n");
+    const last10 = lines.slice(-10);
+    console.error(chalk.dim("Last 10 lines of daemon.log:"));
+    last10.forEach((line) => console.error(chalk.dim("  " + line)));
+  }
+  process.exit(1);
 }
 
 async function cmdDaemonStop(): Promise<void> {
